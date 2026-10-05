@@ -1,0 +1,17 @@
+{
+  "rows": 1,
+  "cols": 2,
+  "soldOut": false,
+  "grades": [ { "name": "VIP", "rows": 1, "price": 100 } ],
+  "seats": [
+    { "id": 1, "label": "A1", "grade": "VIP", "status": "AVAILABLE" },
+    { "id": 2, "label": "A2", "grade": "VIP", "status": "HELD" }
+  ],
+  "availableSeats": 1,
+  "heldSeats": 1,
+  "pendingDepositSeats": 0,
+  "returnPendingSeats": 0,
+  "releaseAt": null,
+  "saleEndAt": "2026-10-04T00:20:00Z",
+  "phase": "RUSH"
+}

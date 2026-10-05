@@ -1,0 +1,58 @@
+HELP.md
+/runs/
+/simulator/runs/
+.gradle
+build/
+!gradle/wrapper/gradle-wrapper.jar
+!**/src/main/**/build/
+!**/src/test/**/build/
+
+### STS ###
+.apt_generated
+.classpath
+.factorypath
+.project
+.settings
+.springBeans
+.sts4-cache
+bin/
+!**/src/main/**/bin/
+!**/src/test/**/bin/
+
+### IntelliJ IDEA ###
+.idea
+*.iws
+*.iml
+*.ipr
+out/
+!**/src/main/**/out/
+!**/src/test/**/out/
+
+### NetBeans ###
+/nbproject/private/
+/nbbuild/
+/dist/
+/nbdist/
+/.nb-gradle/
+
+### VS Code ###
+.vscode/
+
+### Windows download marks ###
+*:Zone.Identifier
+
+### bench (scripts/bench-up.sh) ###
+/logs/
+
+### 작업용 문서·디자인 (GitHub에 올리지 않음, docs/DECISION_CLAUDE.md는 올림) ###
+AGENTS.md
+decision.md
+DECISIONS_old.md
+/plan.md
+/plan_old.md
+/docs/plan.md
+BASE_SPEC.md
+SPEC_v0.4.md
+SPEC_v0.5.md
+/design_ex/
+/presets/

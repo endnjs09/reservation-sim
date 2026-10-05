@@ -1,0 +1,254 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>예약 시뮬레이터</title>
+<link rel="stylesheet" href="app.css">
+</head>
+<body>
+<div id="stage" class="stage">
+  <!-- 실시간 화면 (SPEC 14.1) -->
+  <div id="live-view" class="view">
+    <main class="main">
+      <header class="header">
+        <div class="title">
+          <span class="title-main">예약 시뮬레이터</span>
+          <span class="title-sub">LIVE RESERVATION LAB</span>
+        </div>
+        <div class="pill" id="status-pill">
+          <span class="live-dot" id="live-dot"></span>
+          <span id="live-text">대기</span>
+          <span class="mono sub" id="live-clock">00:00 / 20:00</span>
+          <span class="mono teal" id="live-speed">4×</span>
+        </div>
+        <div class="conn-warning" id="conn-warning" hidden></div>
+        <button type="button" class="result-link" id="show-result" hidden>결과 보기 ›</button>
+        <div class="grow"></div>
+        <ol class="stepper" id="stepper" aria-label="판매 단계"></ol>
+        <div class="view-tabs" role="tablist" aria-label="화면">
+          <button type="button" role="tab" id="tab-live" aria-selected="true">실시간</button>
+          <button type="button" role="tab" id="tab-results" aria-selected="false">실행 결과</button>
+        </div>
+      </header>
+
+      <section class="cards" aria-label="서버 지표">
+        <button type="button" class="card" id="card-rps" data-detail="server">
+          <span class="card-text"><span class="card-label">처리량 (예약 서버)</span><span class="card-value mono"><b id="v-rps">–</b><small> rps</small></span><span class="card-sub" id="s-rps"></span></span>
+          <span class="bars" id="bars-rps"></span>
+        </button>
+        <button type="button" class="card" id="card-p95" data-detail="server">
+          <span class="card-text"><span class="card-label">응답 시간 p95</span><span class="card-value mono"><b id="v-p95">–</b><small> ms</small></span><span class="card-sub" id="s-p95"></span></span>
+          <span class="bars" id="bars-p95"></span>
+        </button>
+        <button type="button" class="card" id="card-err" data-detail="err">
+          <span class="card-text"><span class="card-label">에러율</span><span class="card-value mono"><b id="v-err">–</b><small> %</small></span><span class="card-sub" id="s-err"></span></span>
+          <span class="bars" id="bars-err"></span>
+        </button>
+        <button type="button" class="card" id="card-pool" data-detail="db">
+          <span class="card-text"><span class="card-label">포화도 (DB 커넥션 풀)</span><span class="card-value mono"><b id="v-pool">–</b><small> %</small></span><span class="card-sub" id="s-pool"></span></span>
+          <span class="bars" id="bars-pool"></span>
+        </button>
+      </section>
+
+      <section class="viz" id="viz">
+      <!-- 구조도: 700×670 좌표 그대로, 높이에 맞춰 비율 유지 축소·확대 (app.js layout) -->
+      <div class="structure" id="structure" aria-label="구조도">
+      <div class="structure-inner" id="structure-inner">
+        <div class="edges" id="edges"></div>
+
+        <button type="button" class="node node-queue" id="node-queue" data-detail="queue">
+          <span class="node-head"><span class="node-title">대기열 서버</span><span class="badge" id="q-badge">대기</span></span>
+          <span class="node-k">대기 인원</span>
+          <span class="node-big mono"><b id="q-waiting">0</b><small>명</small></span>
+          <span class="node-sub">입장 <b class="mono" id="q-active">0</b>/<span class="mono" id="q-max">200</span> · 입장키 <b class="mono" id="q-admit">0</b>/s</span>
+          <span class="qdots" id="q-dots"></span>
+          <span class="node-foot">1점 = 8명 · 클릭하면 상세</span>
+        </button>
+
+        <button type="button" class="node node-server" id="node-server" data-detail="server">
+          <span class="node-head"><span class="node-title">예약 서버</span><span class="node-state" id="srv-state">대기</span></span>
+          <span class="node-k">응답 시간 p95</span>
+          <span class="node-big mono"><b id="srv-p95">–</b><small>ms</small></span>
+          <span class="node-sub">처리 중 <b class="mono" id="srv-inflight">0</b> · <b class="mono" id="srv-rps">0</b> rps</span>
+          <span class="mini-bars" id="srv-bars"></span>
+        </button>
+
+        <button type="button" class="node node-users" id="node-users" data-detail="users">
+          <span class="node-head"><span class="node-title">사용자</span><span class="mono sub" id="u-total">0명</span></span>
+          <span class="user-grid">
+            <span><span class="node-k">도착 전</span><b class="mono" id="u-arriving">0</b></span>
+            <span><span class="node-k">대기</span><b class="mono" id="u-waiting">0</b></span>
+            <span><span class="node-k">입장</span><b class="mono" id="u-inside">0</b></span>
+            <span><span class="node-k">재방문 대기</span><b class="mono teal" id="u-revisit">0</b></span>
+            <span><span class="node-k">이탈</span><b class="mono muted" id="u-left">0</b></span>
+            <span><span class="node-k">예매 완료</span><b class="mono blue" id="u-bought">0</b></span>
+          </span>
+        </button>
+
+        <button type="button" class="node node-pg" id="node-pg" data-detail="pg">
+          <span class="node-title">모의 결제사</span>
+          <span class="node-k">승인 응답 p95</span>
+          <span class="node-big mono blue"><b id="pg-p95">–</b><small>ms</small></span>
+          <span class="node-sub">인증 중 <b class="mono purple" id="pg-auth">0</b> · 실패 <b class="mono red" id="pg-fail">0</b></span>
+        </button>
+
+        <div class="edge-labels" id="edge-labels"></div>
+        <canvas class="flow-canvas" id="flow-canvas" width="700" height="670" aria-hidden="true"></canvas>
+      </div>
+      </div>
+
+        <div class="node node-db" id="node-db">
+          <button type="button" class="db-hit" data-detail="db" aria-label="DB 상세"></button>
+          <div class="db-head">
+            <span class="node-title">DB · Postgres</span>
+            <span class="db-stat">커넥션 풀 <b class="mono big" id="db-pool">0</b><span class="mono muted" id="db-pool-max">/20</span></span>
+            <span class="db-stat">대기 <b class="mono mid" id="db-pending">0</b></span>
+            <span class="db-stat">락 대기 <b class="mono mid" id="db-locks">0</b></span>
+            <span class="grow"></span>
+            <span class="countdown" id="db-countdown" hidden>취소표 오픈까지 <b class="mono" id="db-countdown-v">0:00</b></span>
+            <span class="soldout-badge" id="db-soldout" hidden>매진</span>
+          </div>
+          <div class="db-row">
+            <span class="pool-slots" id="pool-slots"></span>
+            <span class="grow"></span>
+            <span class="seat-line">빈 <b class="mono" id="seat-a">0</b> · 선점 <b class="mono orange" id="seat-h">0</b> · 입금 <b class="mono teal" id="seat-d">0</b> · 반환 <b class="mono muted" id="seat-r">0</b> · 판매 <b class="mono blue" id="seat-s">0</b></span>
+          </div>
+          <div class="seat-area" id="seat-area">
+            <div class="stage-strip" id="stage-strip">STAGE</div>
+            <div class="seat-map" id="seat-map"></div>
+          </div>
+          <div class="legend">
+            <span><i class="lg lg-a"></i>빈 좌석</span>
+            <span><i class="lg lg-h"></i>선점 · 남은 시간</span>
+            <span><i class="lg lg-d"></i>입금 대기 · 남은 기한</span>
+            <span><i class="lg lg-r"></i>반환 대기</span>
+            <span><i class="lg lg-s"></i>판매</span>
+            <span class="sep">|</span>
+            <span>효과: <b class="red-l">충돌 ×n</b> · <b class="green">방금 풀림</b></span>
+          </div>
+        </div>
+      </section>
+
+      <div class="howto">
+        <span class="muted">읽는 법</span>
+        <span><b>선 두께</b> = 초당 요청</span>
+        <span><b class="red-l">선이 붉으면</b> 에러 많음</span>
+        <span><b>테두리 색</b> = 포화도 <span class="green">여유</span> · <span class="orange">바쁨</span> · <span class="red">과부하</span></span>
+        <span class="muted">· 노드·카드 클릭 → 상세</span>
+      </div>
+
+      <section class="strips">
+        <button type="button" class="strip strip-log" data-detail="log">
+          <span class="strip-title">실시간 이벤트</span>
+          <i class="dot" id="log-dot"></i>
+          <span class="mono muted" id="log-time">--:--</span>
+          <span class="log-text" id="log-text">아직 이벤트 없음</span>
+          <span class="link">전체 <span id="log-count">0</span>건 ›</span>
+        </button>
+        <button type="button" class="strip strip-counters" data-detail="counters">
+          <span class="strip-title">누적 카운터</span>
+          <span>반환 <b class="mono green" id="c-returns">0</b></span>
+          <span>취소표 오픈 <b class="mono teal" id="c-reopen">0회</b></span>
+          <span>충돌 <b class="mono red" id="c-conflicts">0</b></span>
+          <span class="grow"></span>
+          <span class="link">상세 ›</span>
+        </button>
+      </section>
+    </main>
+
+    <aside class="panel" aria-label="실행 설정">
+      <div class="panel-title">실행 설정</div>
+      <label class="name-field" for="run-label"><span>실행 이름</span><input id="run-label" type="text" maxlength="200" placeholder="예: 조건부 기본"></label>
+      <div class="btn-row">
+        <button type="button" class="btn primary" id="btn-start">▶ 시작</button>
+        <button type="button" class="btn" id="btn-stop" disabled>■ 실행 중지</button>
+      </div>
+      <div class="btn-row">
+        <button type="button" class="btn" id="btn-freeze" aria-pressed="false">화면 고정</button>
+        <button type="button" class="btn" id="btn-reset">초기화</button>
+      </div>
+      <div class="speed">
+        <span class="field-label">배속 (모든 시간 값에 적용)</span>
+        <div class="speed-buttons">
+          <button type="button" data-speed="1">1×</button>
+          <button type="button" data-speed="2">2×</button>
+          <button type="button" data-speed="4">4×</button>
+        </div>
+        <span class="speed-note" id="speed-note"></span>
+      </div>
+      <div class="cfg-tabs" role="tablist" aria-label="설정 탭">
+        <button type="button" role="tab" data-tab="basic" aria-selected="true">기본</button>
+        <button type="button" role="tab" data-tab="scenario" aria-selected="false">시나리오</button>
+        <button type="button" role="tab" data-tab="advanced" aria-selected="false">고급</button>
+      </div>
+      <form class="cfg-form" id="cfg-form" novalidate></form>
+      <div class="presets">
+        <label for="preset-select" class="sr-only">프리셋</label>
+        <select id="preset-select"><option value="">프리셋 선택</option></select>
+        <button type="button" class="btn small" id="preset-load">불러오기</button>
+        <label for="preset-name" class="sr-only">저장할 프리셋 이름</label>
+        <input id="preset-name" type="text" placeholder="저장 이름">
+        <button type="button" class="btn small" id="preset-save">저장</button>
+      </div>
+      <p class="notice" id="notice" role="status"></p>
+    </aside>
+  </div>
+
+  <!-- 실행 결과 화면 (SPEC 14.2) -->
+  <div id="results-view" class="view results" hidden>
+    <header class="header r-header">
+      <div class="title"><span class="title-main">실행 결과</span><span class="title-sub" id="r-sub">RUN REPORT</span></div>
+      <div class="view-tabs r-modes" role="group" aria-label="보기">
+        <button type="button" id="r-mode-single" aria-pressed="true">단일 실행</button>
+        <button type="button" id="r-mode-compare" aria-pressed="false">전략 비교</button>
+      </div>
+      <div class="grow"></div>
+      <span class="sub" id="r-pick-hint">실행 선택</span>
+      <div class="r-chips" id="r-chips"></div>
+      <button type="button" class="r-all" id="r-all">모든 실행 ›</button>
+      <div class="view-tabs" role="tablist" aria-label="화면">
+        <button type="button" role="tab" id="tab-live-2" aria-selected="false">실시간</button>
+        <button type="button" role="tab" id="tab-results-2" aria-selected="true">실행 결과</button>
+      </div>
+    </header>
+    <div class="r-warn" id="r-warn" hidden></div>
+    <section class="r-cards" id="r-cards" aria-label="요약"></section>
+    <div class="r-main">
+      <section class="r-charts" id="r-charts" aria-label="시계열 그래프"></section>
+      <aside class="r-side">
+        <div class="r-box r-manage" id="r-manage"></div>
+        <div class="r-box r-table-box">
+          <div class="r-box-head"><span class="r-box-title" id="r-table-title">요약</span><span class="muted" id="r-table-sub"></span></div>
+          <div class="r-table" id="r-table"></div>
+          <p class="r-verdict" id="r-verdict"></p>
+        </div>
+        <div class="r-box r-inv-box">
+          <div class="r-box-head"><span class="r-box-title">불변식 검사</span><span id="r-inv-summary"></span></div>
+          <div class="r-inv" id="r-inv"></div>
+          <div class="r-box-head r-cond-head"><span class="r-box-title small">실행 조건</span><span class="muted" id="r-cond-sub"></span></div>
+          <div class="r-conds" id="r-conds"></div>
+        </div>
+      </aside>
+    </div>
+    <p class="r-empty" id="r-empty" hidden>저장된 실행이 없습니다. 실시간 화면에서 실행을 시작하세요.</p>
+  </div>
+
+  <div class="frozen-banner" id="frozen-banner" hidden>화면 고정 중 · 실행은 계속</div>
+
+  <div class="modal-backdrop" id="modal-backdrop" hidden></div>
+  <div class="modal" id="modal" role="dialog" aria-modal="true" aria-labelledby="modal-title" hidden>
+    <div class="modal-head">
+      <span class="modal-title" id="modal-title"></span>
+      <span class="muted" id="modal-sub"></span>
+      <span class="grow"></span>
+      <button type="button" class="modal-close" id="modal-close" aria-label="닫기">✕</button>
+    </div>
+    <div class="modal-filters" id="modal-filters" hidden></div>
+    <div class="modal-body" id="modal-body"></div>
+  </div>
+</div>
+<script src="app.js"></script>
+<script src="results.js"></script>
+</body>
+</html>

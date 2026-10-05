@@ -1,0 +1,12 @@
+package dev.endnjs.reservation.common;
+
+public enum ErrorCode {
+    VALIDATION_FAILED(400), KEY_INVALID(403), KEY_EXPIRED(403), KEY_REVOKED(403), SEAT_NOT_FOUND(404), RESERVATION_NOT_FOUND(404),
+    SEAT_UNAVAILABLE(409), USER_ALREADY_HOLDING(409), USER_ALREADY_PURCHASED(409),
+    RESERVATION_NOT_PAYABLE(409), PAYMENT_DECLINED(402), IDEMPOTENCY_KEY_REUSED(422), PG_UNAVAILABLE(502), SALE_ENDED(409),
+    DEPOSIT_NOT_ACCEPTABLE(409), RESERVATION_NOT_CANCELABLE(409), RATE_LIMITED(429);
+
+    private final int httpStatus;
+    ErrorCode(int httpStatus) { this.httpStatus = httpStatus; }
+    public int httpStatus() { return httpStatus; }
+}

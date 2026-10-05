@@ -1,0 +1,52 @@
+server:
+  port: 8080
+  # 연결 대기 줄(accept backlog). 기본 100이면 4× 도착 폭주 때 커널이 연결을 버린다 (docs/DECISION_CLAUDE.md 발견).
+  # 커널 net.core.somaxconn이 상한이다. 실제 값은 bench-up이 environment.bench.acceptCount로 기록한다.
+  tomcat:
+    accept-count: 1024
+spring:
+  datasource:
+    url: jdbc:postgresql://localhost:5432/reservation
+    username: reservation
+    password: reservation
+    hikari:
+      maximum-pool-size: 20
+  jpa:
+    hibernate.ddl-auto: validate
+    open-in-view: false
+    properties:
+      hibernate.order_updates: true
+reservation:
+  strategy: conditional          # conditional | pessimistic | optimistic | naive
+  db-backstop: true
+  hold-ttl-sec: 420
+  max-seats-per-user: 4
+  deposit-deadline-sec: 60
+  return-delay-sec: 30
+  reopen-window-sec: 50
+  time-scale: 4
+  sale-duration-sec: 1200
+  seats: { rows: 10, cols: 10 }
+  grades:
+    - { name: VIP, rows: 1, price: 150000 }
+    - { name: S,   rows: 2, price: 120000 }
+    - { name: A,   rows: 3, price: 90000 }
+    - { name: B,   rows: 4, price: 60000 }
+  close-queue-on-sold-out: true   # 매진 시 대기열 닫기 기본 켬 (docs/DECISION_CLAUDE.md)
+  payment:
+    confirm-deadline-sec: 30     # CONFIRMING 유지 최대 시간 (지나면 복구 대상)
+  scheduler:
+    expiry-interval-ms: 1000
+    recovery-interval-ms: 1000
+    expiry-batch-size: 500
+  pg:
+    base-url: http://localhost:8081
+    connect-timeout-ms: 1000
+    request-timeout-ms: 3000
+  cors-origins: [ "http://localhost:8090" ]
+
+admission:
+  required: true
+  key-secret: dev-only-change-me
+  queue-url: http://localhost:8082
+internal.secret: dev-internal-secret

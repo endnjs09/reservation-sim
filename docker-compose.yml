@@ -1,0 +1,14 @@
+services:
+  postgres:
+    image: postgres:17
+    container_name: reservation-sim-db
+    environment:
+      POSTGRES_DB: reservation
+      POSTGRES_USER: reservation
+      POSTGRES_PASSWORD: reservation
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+volumes:
+  pgdata:

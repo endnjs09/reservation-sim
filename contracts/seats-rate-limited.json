@@ -1,0 +1,5 @@
+{
+  "code": "RATE_LIMITED",
+  "message": "Seat map refreshed too often",
+  "retryAfterMs": 600
+}

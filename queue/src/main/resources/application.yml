@@ -1,0 +1,16 @@
+server:
+  port: 8082
+  # 연결 대기 줄(accept backlog). 기본 100이면 4× 도착 폭주 때 커널이 연결을 버린다 (docs/DECISION_CLAUDE.md 발견).
+  # 커널 net.core.somaxconn이 상한이다. 실제 값은 bench-up이 environment.bench.acceptCount로 기록한다.
+  tomcat:
+    accept-count: 1024
+queue:
+  max-active: 200
+  admit-per-sec: 20
+  admission-ttl-sec: 420
+  busy-max-extra-sec: 510
+  close-queue-on-sold-out: true   # 매진 시 대기열 닫기 기본 켬 (docs/DECISION_CLAUDE.md)
+  admission-interval-ms: 1000
+admission.key-secret: dev-only-change-me
+internal.secret: dev-internal-secret
+cors-origins: http://localhost:8090

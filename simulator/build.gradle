@@ -1,0 +1,20 @@
+dependencies {
+    implementation 'org.hdrhistogram:HdrHistogram:2.2.2'
+    implementation 'org.springframework.boot:spring-boot-starter-webmvc'
+    testImplementation 'org.springframework.boot:spring-boot-starter-test'
+    testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
+}
+
+tasks.register('runCli', JavaExec) {
+    group = 'application'
+    description = 'Run the simulator CLI without Spring'
+    classpath = sourceSets.main.runtimeClasspath
+    mainClass = 'dev.endnjs.simulator.cli.SimulatorCli'
+    workingDir = rootProject.projectDir
+}
+
+tasks.named('test') {
+    systemProperty 'simulator.test.classpath', sourceSets.test.runtimeClasspath.asPath
+}
+
+tasks.named('bootRun') { workingDir = rootProject.projectDir }
