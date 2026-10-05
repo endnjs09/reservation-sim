@@ -4,6 +4,9 @@
 > 예전 파일은 `docs/history/`에 참고용으로만 둔다. 예전 파일과 이 파일이 다르면 **이 파일이 맞다.**
 >
 > 변경 기록
+> - 2026-10-05 통합본 1.3.0: 매진 시 대기열 닫기 기본 켬 (7.6, 10.3). 좌석 조회 새로고침 제한 (6.4.1, 기본 켬)·좌석 조회 캐시 (6.4.2, 선택). 429는 에러율에서 제외 (8.3, 8.1). 종료 정지 대기를 남은 선점·결제가 없으면 바로 끝내기, "정리 중" 표시 (8.5, 14.1). 엔진 종료 때 SALE_ENDED 기록 (8.5). 누적 카운터에서 Hardcore 제거, 실시간 이벤트 80건 보관 (14.1). 새 bench 기준선 (10.4).
+> - 2026-10-05 통합본 1.2.0: 대기 이탈 규칙 (11.4.1, 10.3, 11.8), 실행 중지 시 예매 후 취소 대기 = confirmed (11.8), 사용자 노드 6칸 (14.1), 창 크기 맞춤 레이아웃 (13장), 측정 중 다른 컨테이너 경고 (10.4).
+> - 2026-10-04 통합본 1.1.3: 서버별 anchorAt을 보내기 직전 값으로 (3장, 10.2). 기준선은 워밍업 1회 뒤 (10.4). 목업 위치 `design_ex/` (2.1, 13장).
 > - 2026-10-04 통합본 1.1.2: W3 완료 기준을 bench 새 기준선 2개로 (18장, S4). W2 기준선 비교는 참고용. 확인 요청 기준은 `AGENTS.md`로 분리 (0장 3번).
 > - 2026-10-04 통합본 1.1.1: 측정 환경(bench) 정의 10.4 추가, 사건 목록에 CLOCK_OFFSET_HIGH·SWAP_USED, 비교 경고에 ENV_DEGRADED 추가 (경고 8종).
 > - 2026-10-04 통합본 1.1.0: **시계 기준점(anchor) 도입** (3장). 이 환경(WSL)의 벽시계가 실제보다 6~11% 빠르게 가고 단조 시계는 정확함을 확인(실제 120초 → uptime 120.00초, date 127초). 판단용 "현재 시각"을 벽시계 대신 `anchorAt + 단조 경과`로 계산. 관련: 6.14, 7.7, 8.5, 9.2(`CLOCK_MODEL_DIFFERS`), 10.2, 11.3, 12, 16.
@@ -54,9 +57,9 @@ reservation-sim/
 ├── decision.md              # Codex 결정 기록
 ├── DECISION_CLAUDE.md       # Claude Code 결정 기록
 ├── contracts/               # API 응답 계약 파일 (0장 5번)
+├── design_ex/              # 화면 디자인 원본 (실시간·실행 결과 목업 포함)
 ├── docs/
-│   ├── ui-realtime.dc.html  # 실시간 화면 목업
-│   ├── ui-results.dc.html   # 실행 결과 화면 목업
+│   ├── plan.md              # Claude Code 계획
 │   └── history/             # 예전 명세
 ├── server/      :8080  예약 서버       dev.endnjs.reservation
 ├── queue/       :8082  대기열 서버     dev.endnjs.queue
@@ -123,7 +126,7 @@ dev.endnjs.simulator
 - 모든 "현재 시각"은 주입된 `java.time.Clock`. SQL의 `now()` 금지 (파라미터로 전달).
 - **시계 기준점 (anchor)**: 이 환경에서는 벽시계가 단조 시계보다 빠르게 간다. 그래서 판단에 쓰는 "현재 시각"을 벽시계에서 직접 읽지 않는다.
   - 시뮬레이터가 실행 시작 때 기준 시각 `anchorAt`(자기 벽시계 1회 읽기)과 자기 단조 시계 기준점을 **같은 순간에 한 번** 잡는다. `saleEndAt`, `startedAt`, 시계열 `t`는 모두 이 기준 하나에서 계산한다 (기준점을 두 개 두지 않는다).
-  - `/admin/reset`으로 예약 서버·대기열 서버·mock-pg에 **같은 `anchorAt`**을 보낸다.
+  - `/admin/reset`의 `anchorAt`은 서버마다 **보내기 직전의 anchor 시계 값**(기준 시각 + 보내기 직전까지의 단조 경과)으로 계산해 보낸다. 그래서 늦게 받는 서버도 시계가 뒤처지지 않는다 (실측: 같은 값을 보낼 때 최대 −137ms → 보정 후 warm 상태 6ms 이하). `saleEndAt`, `startedAt`, `t`는 기준 시각 하나에서 계산한다.
   - 각 서버의 Clock = `anchorAt + (System.nanoTime() − reset 수신 시 nanoTime)`. reset 전(기동 직후)에는 시스템 시계. 다시 reset하면 기준을 새로 잡는다.
   - 시뮬레이터 안의 시간 판단(판매 종료 보조 경로, 재방문 시각, 예매 취소 시점, `releaseAt` 비교 등)도 같은 anchor 시계를 쓴다. `Instant.now()`·시스템 시계 직접 호출 금지.
   - reset 수신 순서 때문에 서버끼리 수 ms 차이가 날 수 있다. 시뮬레이터는 reset 직후 각 서버 시각과 자기 시각의 차이를 재서 run.json `clockOffsetsMs`에 남기고, 500ms를 넘으면 `CLOCK_OFFSET_HIGH` 사건을 남긴다 (실행은 계속).
@@ -264,6 +267,8 @@ spring:
 reservation:
   strategy: conditional          # conditional | pessimistic | optimistic | naive
   db-backstop: true
+  seats-rate-limit: { enabled: true, min-interval-sec: 1.0 }   # 6.4.1
+  seats-cache-sec: 0                                         # 6.4.2, 0 = 끔
   time-scale: 4
   hold-ttl-sec: 420
   max-seats-per-user: 4
@@ -284,7 +289,7 @@ queue-server.base-url: http://localhost:8082   # SlotNotifier 대상
 internal.secret: dev-internal-secret            # 대기열 서버와 같은 키·같은 값
 cors-origins: [ "http://localhost:8090" ]
 ```
-- `strategy`, `db-backstop`, 시간 값, 좌석·등급, 결제 값은 **RuntimeConfig**로 들고 `/admin/reset`으로 바꾼다.
+- `strategy`, `db-backstop`, 새로고침 제한·캐시, 시간 값, 좌석·등급, 결제 값은 **RuntimeConfig**로 들고 `/admin/reset`으로 바꾼다.
 
 ### 6.2 공통
 - JSON, UTF-8. 시각은 ISO-8601 UTC.
@@ -339,6 +344,20 @@ cors-origins: [ "http://localhost:8090" ]
 - `soldOut` = AVAILABLE 0 이고 HELD 0 (PENDING_DEPOSIT·RETURN_PENDING·SOLD만 남음).
 - 트랜잭션 없이 읽어도 된다 (약간 오래된 값 허용).
 - 판매 종료 후에는 409 SALE_ENDED (6.10).
+- 처리 순서: 입장키 검사(6.3) → 새로고침 제한(6.4.1) → 캐시(6.4.2) → DB.
+
+#### 6.4.1 새로고침 제한 (기본 켬)
+- 대상은 `GET /seats`만. `/holds*`, `/payments/confirm` 등은 제한하지 않는다.
+- 같은 입장키(kid)로 `seatsMinIntervalSec`(기본 1.0, 시뮬레이션 초, 배속 적용) 안에 다시 조회하면 **429** `{ "code": "RATE_LIMITED", "retryAfterMs" }` + `Retry-After` 헤더. 계약 파일 `contracts/seats-rate-limited.json`.
+- kid별 마지막 조회 시각은 메모리. `/admin/reset` 때 비운다.
+- 시뮬레이터 사용자는 429를 받으면 `retryAfterMs`만큼 기다렸다가 다시 조회한다. 이탈 성향 시간(11.4)은 그대로 흐른다.
+- 1×에서는 사용자 새로고침 간격(10.3, 1~3초)이 이미 길어 거의 걸리지 않는다 (기준선 run-ebf26b93에서 실행 전체 242건). 부하 감소 장치라기보다 안전장치다.
+
+#### 6.4.2 좌석 조회 캐시 (서버 전략, 선택, 기본 끔)
+- `seatsCacheSec` = 0(끔) / 1. 켜면 `GET /seats` 응답 전체를 그 시간(시뮬레이션 초, 배속 적용) 동안 모든 사용자에게 재사용한다.
+- 선점·결제·취소는 캐시와 무관하게 항상 DB에서 조건부로 처리한다. 캐시 때문에 중복 판매가 생기면 안 된다 (화면이 오래돼도 결과는 409).
+- 대가: 최대 `seatsCacheSec` 지난 화면을 보고 선점하므로 충돌(409)이 늘어난다.
+- 측정 (bench 1×, conditional, 끔 → 1초): 좌석 조회 DB 읽기 104,706 → 1,033, DB 풀 최대 65% → 10%, 폭주 구간 p95 16.6 → 6.8ms, 409 충돌 1,408 → 1,632.
 
 ### 6.5 선점
 **`POST /holds`** 헤더 `Idempotency-Key`(1~64자), `X-Admission-Key`
@@ -464,7 +483,8 @@ cors-origins: [ "http://localhost:8090" ]
   "strategy": "conditional", "dbBackstop": true, "timeScale": 4,
   "holdTtlSec": 420, "confirmDeadlineSec": 30, "maxSeatsPerUser": 4,
   "depositDeadlineSec": 60, "returnDelaySec": 30, "saleDurationSec": 1200, "reopenWindowSec": 50,
-  "anchorAt": "...", "saleEndAt": "...", "runEpoch": "...", "closeQueueOnSoldOut": false }
+  "seatsRateLimitEnabled": true, "seatsMinIntervalSec": 1.0, "seatsCacheSec": 0,
+  "anchorAt": "...", "saleEndAt": "...", "runEpoch": "...", "closeQueueOnSoldOut": true }
 ```
 - `closeQueueOnSoldOut`은 받기만 하고 쓰지 않는다 (시뮬레이터가 두 서버에 같은 본문 구성을 보내기 위함).
 - 모든 필드 선택, 생략 시 현재 값 유지. grades 합 ≠ rows → 400.
@@ -508,7 +528,7 @@ cors-origins: [ "http://localhost:8090" ]
 - **만료 미룸**: busy인 자리는 만료하지 않는다 (결제 도중 보호). 결제 중 TTL을 넘긴 busy는 **정상**이다.
 - **busy 상한**: busy여도 `now ≥ expiresAt + busyMaxExtraSec`이면 강제 만료. 기본 510 (= holdTtl 420 + confirmDeadline 30 + 60, 시뮬레이션 초). 강제 만료마다 `expiredByBusyCap` +1, `busyCapExpirations`에 `{ kid, userId, at }`.
 - EXPIRED·LEFT 사용자가 다시 진입하면 맨 뒤 새 토큰.
-- **이탈은 입장 후에만** 일어난다 (11.4). 대기열 서버가 대기자를 임의로 내보내는 경우는 7.6뿐이다.
+- 대기자의 이탈은 시뮬레이터가 판단한다 (11.4 입장 후 이탈, 11.4.1 대기 이탈). 대기열 서버가 대기자를 임의로 내보내는 경우는 7.6뿐이다.
 
 ### 7.3 입장키
 - 형식 `v1.<payload>.<sig>` (base64url, 패딩 없음)
@@ -551,7 +571,8 @@ cors-origins: [ "http://localhost:8090" ]
 
 ### 7.6 판매 상태 처리
 - **판매 종료** (`saleEndAt`): WAITING/ADMITTED 전부 CLOSED(`SALE_ENDED`). 이후 enter는 200 + CLOSED(`SALE_ENDED`) 토큰.
-- **`closeQueueOnSoldOut`** (기본 false): true이고 soldOut이면 WAITING 전부와 busy 아닌 ADMITTED를 CLOSED(`SOLD_OUT`), 이후 enter도 CLOSED(`SOLD_OUT`). soldOut=false가 오면 다시 접수. false면 아무도 내보내지 않는다.
+- **`closeQueueOnSoldOut`** (기본 true, 1.3.0부터): true이고 soldOut이면 WAITING 전부와 busy 아닌 ADMITTED를 CLOSED(`SOLD_OUT`), 이후 enter도 CLOSED(`SOLD_OUT`). soldOut=false가 오면 다시 접수. false면 아무도 내보내지 않는다.
+- 이미 발급된 입장키는 회수하지 않는다. CLOSED된 ADMITTED 사용자도 키 만료(`admissionTtlSec`)까지 `/seats`를 계속 쓸 수 있고, 키가 끝나면 재진입하다 CLOSED로 나간다 (실제 예매 사이트처럼 예매창 안의 사용자를 강제로 쫓아내지 않음). 또 soldOut은 HELD 0이어야 하므로 결제 포기 선점이 남아 있으면 TTL까지 닫히지 않는다.
 
 ### 7.7 관리 API
 - `POST /admin/reset` `{ "anchorAt", "maxActive", "admitPerSec", "admissionTtlSec", "busyMaxExtraSec", "timeScale", "saleEndAt", "closeQueueOnSoldOut", "runEpoch" }` (`anchorAt`으로 3장의 Clock 기준을 잡는다)
@@ -578,11 +599,11 @@ cors-origins: [ "http://localhost:8090" ]
 |---|---|---|
 | 처리량 | 예약 서버 사용자 엔드포인트 초당 요청 합 (`/admin/**` 제외) | - |
 | 응답 시간 | 예약 서버 사용자 엔드포인트 합친 1초 창 p50/p95/p99 (ms). 대표 p95 | p95 100 / 300 (SLO) |
-| 에러율 | 1초 창 non-2xx ÷ 전체 × 100 | 8% / 25% |
+| 에러율 | 1초 창 non-2xx ÷ 전체 × 100. 429 RATE_LIMITED는 분자·분모 모두 제외 (8.3) | 8% / 25% |
 | 포화도 | DB 풀 `active ÷ max × 100`. 보조: 풀 대기, 락 대기, 스레드 사용률 | 70% / 90% |
 - 임계치는 UI 고급 설정에서 바꾸고 실행 기록에 저장한다.
 - 4신호는 시뮬레이터가 **한 곳에서 계산**(`signals`, `levels`)해 실시간 화면과 저장 시계열에 같은 값을 쓴다.
-- **실패율** `failPct` = 클라이언트 측 (예약 서버 5xx + timeout + transport) ÷ 시뮬레이터가 예약 서버로 보낸 요청 × 100. 에러율과 따로 본다 (409는 경쟁의 결과지 고장이 아니다).
+- **실패율** `failPct` = 클라이언트 측 (예약 서버 5xx + timeout + transport) ÷ 시뮬레이터가 예약 서버로 보낸 요청(429 받은 요청 제외) × 100. 에러율과 따로 본다 (409는 경쟁의 결과지 고장이 아니다).
 
 ### 8.2 응답 시간 측정
 - **서버 측** (`RequestMetricsFilter`): 진입 ~ 응답 커밋. 엔드포인트별 HdrHistogram(1µs~60s, 유효숫자 3), 1초 창은 `Recorder`로 교체.
@@ -600,7 +621,8 @@ cors-origins: [ "http://localhost:8090" ]
 | key | 403 KEY_INVALID, KEY_EXPIRED, KEY_REVOKED |
 | declined | 402 |
 | client | 그 외 4xx |
-| shed | 429, 503 (현재 발생하지 않음, 과부하 대응 실험용 자리) |
+| rateLimited | 429 RATE_LIMITED (6.4.1). **에러율·실패율의 분자와 분모 모두에서 뺀다** (정상 동작이므로, 그리고 이전 기준선과 비교가 틀어지지 않게) |
+| shed | 그 외 429, 503 (현재 발생하지 않음, 과부하 대응 실험용 자리) |
 | server | 5xx |
 | timeout | (클라이언트만) 응답 시간 초과, 기본 10초 실제 |
 | transport | (클라이언트만) 연결 실패·끊김 |
@@ -612,11 +634,12 @@ cors-origins: [ "http://localhost:8090" ]
   "endpoints": { "holds": { "rps": 140, "inflight": 22, "avgMs": 12.5,
                  "latency": { "p50": 8.1, "p95": 41.0, "p99": 88.0, "max": 130.2 },
                  "status": { "2xx": 18, "409": 122 }, "errors": { "SEAT_UNAVAILABLE": 120 } } },
-  "total": { "rps": 410, "latency": { ... }, "errorClasses": { "conflict": 122, "notPayable": 1, "key": 3, "declined": 0, "client": 0, "shed": 0, "server": 0 } },
+  "total": { "rps": 410, "latency": { ... }, "errorClasses": { "conflict": 122, "notPayable": 1, "key": 3, "declined": 0, "client": 0, "rateLimited": 0, "shed": 0, "server": 0 } },
   "cumulative": { "holds": { "count": 0, "p50": 0, "p95": 0, "p99": 0, "max": 0 }, "total": { ... } },
   "inflightTotal": 34,
   "pool": { "active": 18, "idle": 2, "pending": 3, "max": 20, "acquireMs": { "p95": 12.0, "max": 40.0 }, "timeouts": 0 },
   "db": { "lockWaits": 7, "lockWaitMaxMs": 180 },
+  "seatsCache": { "hit": 0, "miss": 0, "dbReads": 0 },
   "http": { "threadsBusy": 64, "threadsMax": 200 },
   "jvm": { "heapUsedMb": 412, "heapMaxMb": 2048, "gcPauseMs": 3, "liveThreads": 230 },
   "pg": { "confirmInflight": 3, "confirmAvgMs": 240, "confirm": { "p50": 240, "p95": 470, "p99": 520 }, "timeouts": 0 },
@@ -635,6 +658,7 @@ cors-origins: [ "http://localhost:8090" ]
 | jvm | MemoryMXBean, GarbageCollectorMXBean 1초 차분, ThreadMXBean |
 | seatConflicts | 최근 2초 좌석별 409 SEAT_UNAVAILABLE 수 |
 | events | 최근 1초 사건 수 |
+| seatsCache | 최근 1초 캐시 hit·miss, 좌석 조회의 실제 DB 읽기 수 (캐시 끔이면 dbReads = /seats 처리 수). 구조도의 예약 서버→DB 선은 이 값 기준 |
 - 계측 쿼리 실패는 무시하고 이전 값 유지.
 - CORS: `cors-origins`에 대해 `/admin/**` GET 허용 (대기열 서버·mock-pg도 같음).
 
@@ -661,7 +685,7 @@ invariants.json     외부 검사기가 씀 (없을 수 있음)
   "status": "COMPLETED", "statusReason": null, "startedAt": "...", "endedAt": "...",
   "durationMs": 1202000, "simDurationSec": 1200, "timeScale": 1,
   "config": { "...": "RunConfig 전체" },
-  "server": { "strategy": "conditional", "dbBackstop": true, "poolMax": 20, "threadsMax": 200, "virtualThreads": false },
+  "server": { "strategy": "conditional", "dbBackstop": true, "seatsRateLimitEnabled": true, "seatsMinIntervalSec": 1.0, "seatsCacheSec": 0, "poolMax": 20, "threadsMax": 200, "virtualThreads": false },
   "queueMode": "EXTERNAL",
   "thresholds": { "p95WarnMs": 100, "p95SloMs": 300, "errWarnPct": 8, "errBadPct": 25, "poolWarnPct": 70, "poolBadPct": 90 },
   "anchorAt": "...", "clockOffsetsMs": { "server": 3, "queue": 5, "mockPg": 2 },
@@ -670,7 +694,8 @@ invariants.json     외부 검사기가 씀 (없을 수 있음)
 ```
 - status: RUNNING / COMPLETED / STOPPED / FAILED (`statusReason`).
 - `queueMode`: 대기열 분리 전 실행은 `EMBEDDED`, 이후 `EXTERNAL`. W3에서 내장 대기열을 지운 뒤에는 EMBEDDED 실행이 불가능하고, 기존 EMBEDDED 기록은 읽기·비교만 한다. EMBEDDED 기록에서 대기열 서버 전용 값(`busy`, `slotsBusyOverTtl`, `expiredByBusyCap`, `admittedThisTick`, snapshot의 `queue`)은 null이며 I8″·I16은 검사 대상 아님.
-- `server.*`는 시작 시 서버 config·metrics에서 실제 값을 읽어 기록.
+- `server.*`는 시작 시 서버 config·metrics에서 실제 값을 읽어 기록. `seatsCacheSec`은 fingerprint에 포함.
+- 새 필드가 없는 예전 기록은 새로고침 제한 끔·캐시 0으로 읽는다 (그 기능이 없던 실행).
 
 **timeseries.ndjson** (1줄 3KB 이하)
 ```json
@@ -689,9 +714,11 @@ invariants.json     외부 검사기가 씀 (없을 수 있음)
 - `t`와 `saleEndAt`은 같은 anchor에서 나온다 (3장). 판매 종료는 `t = saleDurationSec ± (timeScale + 1)`초 (1×면 ±2초).
 - `wallMs` = 실제 경과 ms. 요청 0인 창의 백분위는 null.
 
+- 엔진이 끝날 때 서버 지표를 한 번 더 읽어 `SALE_ENDED`를 남긴다 (판매 종료 직후 엔진이 멈춰 마지막 1초 측정이 빠지는 경우 대비). 같은 초 시계열 줄은 두 번 쓰지 않는다.
+
 **events.ndjson**: `PHASE`, `SOLD_OUT`, `REOPEN`(seats, revisits), `SALE_ENDED`, `SLO_BREACH_START/END`, `POOL_SAT_START/END`, `NOTIFY_DROPPED`, `BUSY_CAP_EXPIRED`, `CLOCK_OFFSET_HIGH`(3장), `SWAP_USED`(10.4)만. 사용자 단위 사건은 저장하지 않는다.
 
-**snapshot.json**: 종료 후 정지 대기(TTL + confirmDeadline + 5초, 시뮬레이션) 뒤 `{ "takenAt", "quiesced", "server": /admin/snapshot, "queue": /admin/snapshot, "mockPg": /admin/payments }`. 중지한 실행은 즉시, `quiesced: false`.
+**snapshot.json**: 종료 후 정지 대기 뒤. 정지 대기는 매초 예약 서버의 HELD·CONFIRMING·PENDING_DEPOSIT 수를 보고 **모두 0이면 바로 끝내고**, 아니면 최대 TTL + confirmDeadline + 5초(시뮬레이션)까지 기다린다. 이 동안 status는 RUNNING, 화면은 "정리 중" (14.1). 결과 `{ "takenAt", "quiesced", "server": /admin/snapshot, "queue": /admin/snapshot, "mockPg": /admin/payments }`. 중지한 실행은 즉시, `quiesced: false`.
 
 ### 8.6 `invariants.json` (외부 검사기가 씀, 시뮬레이터는 읽기만)
 ```json
@@ -744,7 +771,7 @@ p95Max(낮음), p99Max(낮음), p95Rush(낮음), sloBreachSec(낮음), errPctRus
 
 ### 10.2 실행 시작
 1. 대기열 서버·예약 서버·결제사 `GET /actuator/health`. 하나라도 실패 → 실행을 만들지 않고 409 `TARGET_DOWN { "target" }`.
-2. `anchorAt`·단조 기준점을 같은 순간에 잡고(3장), `runEpoch` 생성, `saleEndAt` 계산 → 세 서버 `/admin/reset` (+ mock-pg config). 세 서버에 같은 anchorAt, 대기열·예약 서버에 같은 runEpoch·saleEndAt. 하나라도 실패 → status FAILED.
+2. `anchorAt`·단조 기준점을 같은 순간에 잡고(3장), `runEpoch` 생성, `saleEndAt` 계산 → 세 서버 `/admin/reset` (+ mock-pg config). 서버별 anchorAt은 보내기 직전 값(3장), 대기열·예약 서버에 같은 runEpoch·saleEndAt. 하나라도 실패 → status FAILED.
    - reset 직후 각 서버 시각과의 차이를 재서 `clockOffsetsMs`에 기록 (3장).
 3. run.json 작성 (서버 실제 설정, 가용 메모리 포함).
 4. 사용자 시작.
@@ -762,6 +789,9 @@ p95Max(낮음), p99Max(낮음), p95Rush(낮음), sloBreachSec(낮음), errPctRus
 | 사용자 | casualLeaveSec | 0~60 | sim |
 | 사용자 | persistentHalfLifeSec | 180 | sim |
 | 사용자 | revisitProb (c/p/h) | 0.1/0.5/0.9 | sim |
+| 사용자 | queueAbandonEnabled | true | sim |
+| 사용자 | queueHalfLifeSec (c/p) | 180 / 600 | sim |
+| 사용자 | queueStallWindowSec / queueStallMinProgress | 60 / 0.05 | sim |
 | 사용자 | ticketCountMix (1/2/3/4) | 30/55/10/5 % | sim |
 | 사용자 | adjacentRequiredRate | 0.9 | sim |
 | 사용자 | seed | 42 | sim |
@@ -769,7 +799,7 @@ p95Max(낮음), p99Max(낮음), p95Rush(낮음), sloBreachSec(낮음), errPctRus
 - `earlyQuitRate`는 폐기 (설정·프리셋·UI에서 제거). 단, 사용자 생성 때 그 자리에서 뽑던 난수 1회는 **그대로 뽑아 버린다** — 같은 seed에서 예전 실행과 사용자 행동이 같게 유지되도록.
 
 | 대기열 | maxActive / admitPerSec / admissionTtlSec | 200 / 20 / 420 | queue |
-| 대기열 | closeQueueOnSoldOut | false | queue |
+| 대기열 | closeQueueOnSoldOut | **true** (1.3.0부터, 예전 기록은 기록 값대로) | queue |
 | 대기열 | busyMaxExtraSec | 510 | queue |
 | 예약·결제 | holdTtlSec / maxSeatsPerUser | 420 / 4 | server |
 | 예약·결제 | paymentMix (card/deposit) | 85/15 % | sim |
@@ -781,6 +811,8 @@ p95Max(낮음), p99Max(낮음), p95Rush(낮음), sloBreachSec(낮음), errPctRus
 | 예약·결제 | confirmMinMs ~ confirmMaxMs | 100 ~ 500 | mock-pg |
 | 판매 | saleDurationSec | 1200 | server, queue |
 | 서버 | strategy / dbBackstop | conditional / true | server |
+| 서버 | seatsRateLimitEnabled / seatsMinIntervalSec | true / 1.0 | server |
+| 서버 | seatsCacheSec (0 끔 / 1) | 0 | server |
 | 실행 | timeScale | 4 | 전부 |
 | 계측 | thresholds | 8.1 기본값 | 기록·UI |
 | 실행 | timeLimitSec | 현재 구현 값 유지 (BASE 기본 600은 판매 시간 1200보다 짧다. 구현 값이 판매 시간 + 정지 대기보다 짧으면 보고) | sim |
@@ -815,7 +847,10 @@ p95Max(낮음), p99Max(낮음), p95Rush(낮음), sloBreachSec(낮음), errPctRus
 - 스크립트: `scripts/bench-up.sh`(빌드·기동·health 대기), `scripts/bench-down.sh`(정리). 로그는 `logs/`.
 - run.json `environment.bench`에 위 값(포트, 힙, CPU 배치)을 기록한다. 값이 다른 두 실행을 비교하면 `ENV_DIFFERS`.
 - 실행 중 스왑 사용이 100MB를 넘으면 `SWAP_USED` 사건을 남긴다 (`ENV_DEGRADED` 경고 근거).
+- 기준선은 bench-up 직후 첫 실행이 아니라 **워밍업 실행 1회 뒤**에 뜬다 (띄운 직후에는 JVM 초기화로 시계 차이·지연이 커진다. 실측 mock-pg cold −90ms).
 - 비교용 기준선은 이 환경에서 뜬 실행만 쓴다. bench 도입 전 실행(W2 EMBEDDED 기준선 포함)은 참고용 비교만 한다.
+- bench-up은 측정과 무관한 컨테이너·프로세스(다른 프로젝트의 DB 등)가 떠 있으면 이름을 출력하고 경고한다. 기준선을 뜰 때는 끄고 뜬다. 떠 있던 목록은 run.json `environment.bench.otherContainers`에 남긴다.
+- **현재 기준선 (1.3.0 기본값)**: conditional `run-ebf26b93`, pessimistic `run-3b71ffc8`. 1.2.0 기본값 기준선 `run-535adb85`·`run-f7d2b182`는 이름 앞에 "구 기본값 ·"을 붙여 고정 유지 (대기열 닫기·새로고침 제한이 달라 직접 비교하지 않음).
 
 ---
 
@@ -853,13 +888,25 @@ p95Max(낮음), p99Max(낮음), p95Rush(낮음), sloBreachSec(낮음), errPctRus
 - **보조**: (anchor 시계 기준으로) `saleEndAt`이 지났는데 `/seats`에서 정상 응답을 받지 못할 때(transport·timeout·5xx)만 공통 `saleEndAt`으로 종료. 이 경우 `events.saleEndFallback` +1.
 
 ### 11.4 이탈 성향 — 입장 후 "잔여석 없음 상태"에서만
-"잔여석 없음 상태" = 입장 후 받은 좌석 맵의 AVAILABLE이 0. **대기 중에는 적용하지 않는다** (좌석 상황을 모르므로).
+"잔여석 없음 상태" = 입장 후 받은 좌석 맵의 AVAILABLE이 0. 대기 중에는 이 규칙을 적용하지 않는다 (좌석 상황을 모르므로). 대기 중 이탈은 11.4.1.
 | 유형 | 행동 |
 |---|---|
 | casual | 처음 잔여석 없음을 본 시점부터 `U(casualLeaveMin, casualLeaveMax)` 뒤 떠남. 그 전에 좌석이 생기면 정상 진행 |
 | persistent | 새로고침마다 이탈 확률 `1 − 0.5^(Δt / persistentHalfLifeSec)` (t = 잔여석 없음이 이어진 시간) |
 | hardcore | 떠나지 않음. 키 만료 시 즉시 재진입. 판매 종료까지 |
 - 좌석이 생기면 잔여석 없음 시간은 0으로 초기화.
+
+### 11.4.1 대기 이탈 — 오래 기다리면 나간다
+대기자는 좌석 상황을 모르고, **기다린 시간과 자기 순번 변화**만으로 판단한다.
+- 대기 중(WAITING) 사용자는 `/queue/status` 응답을 받을 때마다 이탈 여부를 정한다. 확률 `1 − 0.5^(Δt ÷ 반감기)` (Δt = 직전 판단 이후 시뮬레이션 시간).
+- 반감기: casual `queueHalfLifeSec.casual`(180), persistent `queueHalfLifeSec.persistent`(600), hardcore 이탈 없음.
+- **줄 멈춤**: 최근 `queueStallWindowSec`(60) 동안 순번이 `queueStallMinProgress`(5%) 미만으로 줄었으면 그 판단에서는 반감기를 절반으로. 대기 시작 후 60초가 안 됐으면 멈춤 판단 안 함.
+  - 기본 시나리오에서는 매진 후에도 순번이 계속 줄어서 발동하지 않는다 (실측 0회). 정원이 막혀 줄이 실제로 멈추는 시나리오용 안전장치로 둔다.
+- 대기열에 다시 들어가면 순번 기록과 시간 기준을 새로 잡는다.
+- 이탈하면 `POST /queue/leave` 후 재방문 대기(11.5)로 간다.
+- 판단용 난수는 **별도 스트림**에서 뽑는다 (같은 seed에서 다른 행동의 난수 순서가 바뀌지 않게).
+- `queueAbandonEnabled`(기본 true)가 false면 대기 이탈 없음. 이 값이 없는 예전 실행 기록은 false로 읽는다 (규칙 도입 전 실행이 켬으로 표시되지 않게).
+- 실측 (bench 1×, 기본 설정): 켬일 때 대기 인원 t=600 157명(끔 709명), 매진 후 대기열 폴링 감소. 예약 서버 부하는 거의 같음 (정원 200이 계속 차 있으므로).
 
 ### 11.5 재방문
 - 구매 못 하고 떠난 사용자는 취소표 재방문 대기 상태.
@@ -881,13 +928,13 @@ p95Max(낮음), p99Max(낮음), p95Rush(낮음), sloBreachSec(낮음), errPctRus
   "requests": { "sent": 0, "byEndpoint": { ... } },
   "responses": { "2xx": 0, "4xx": 0, "5xx": 0, "transportErrors": 0 },
   "avgLatencyMs": { ... },
-  "outcomes": { "confirmed", "soldOut", "gaveUp", "abandoned", "incomplete", "error", "depositPaid", "depositExpired", "canceledAfterPurchase", "revisited" },
+  "outcomes": { "confirmed", "soldOut", "gaveUp", "abandoned", "incomplete", "error", "depositPaid", "depositExpired", "canceledAfterPurchase", "revisited", "queueAbandoned" },
   "outcomesByPersona": { ... }, "outcomesByChurn": { "casual": { ... }, "persistent": { ... }, "hardcore": { ... } },
-  "events": { "conflicts", "refreshes", "requeues", "authFailed", "declined", "holdExpired", "immediateReturnsSeen", "reopenSeen", "saleEndFallback" },
+  "events": { "conflicts", "refreshes", "requeues", "authFailed", "declined", "holdExpired", "immediateReturnsSeen", "reopenSeen", "saleEndFallback", "queueAbandons", "queueAbandonsStalled", "cancelPendingAtStop", "rateLimited" },
   "seatsSold": 100, "seatsByGrade": { ... },
   "signals": { "rpsMax", "p95Max", "p99Max", "p95Rush", "errPctRush", "failPct", "poolPctMax", "poolSatSec", "lockWaitsMax", "sloBreachSec", "soldOutAtSec" },
   "latencyMs": { "holds": { "p50", "p95", "p99" } }, "clientLatencyMs": { ... },
-  "errorClasses": { "conflict", "notPayable", "key", "declined", "client", "shed", "server", "timeout", "transport" } }
+  "errorClasses": { "conflict", "notPayable", "key", "declined", "client", "rateLimited", "shed", "server", "timeout", "transport" } }
 ```
 | 필드 | 정의 |
 |---|---|
@@ -896,6 +943,10 @@ p95Max(낮음), p99Max(낮음), p95Rush(낮음), sloBreachSec(낮음), errPctRus
 | sloBreachSec | p95 ≥ p95SloMs인 초 수 |
 | soldOutAtSec | AVAILABLE이 처음 0이 된 t |
 | latencyMs | 서버 `cumulative` 종료 시점 값 |
+| outcomes.queueAbandoned | 대기 이탈을 한 번이라도 한 **사람 수** (outcomes는 모두 사람 단위) |
+| events.queueAbandons / queueAbandonsStalled | 대기 이탈 **횟수** / 그중 줄 멈춤 상태에서 떠난 횟수 |
+| outcomes.gaveUp | 떠난 뒤(입장 후 이탈 또는 대기 이탈) 판매 종료까지 돌아오지 않은 사람. 매진 퇴장(soldOut)과 구분 |
+| 실행 중지·제한 시간 | 예매를 마치고 취소 시점만 기다리던 사용자는 `confirmed`로 저장 (실제 예매 완료자). 실행되지 않은 취소 예정 건수는 `events.cancelPendingAtStop`. 그래서 중지된 실행도 요약 confirmed − 구매 후 취소 = 서버 CONFIRMED |
 
 ### 11.9 시뮬레이터 API (:8090)
 | 메서드 / 경로 | 설명 |
@@ -944,8 +995,15 @@ p95Max(낮음), p99Max(낮음), p95Rush(낮음), sloBreachSec(낮음), errPctRus
 ## 13. UI 공통
 
 - 화면 2개: 헤더 오른쪽 탭 **실시간 · 실행 결과**. 실행이 끝나면 실시간 화면에 "결과 보기" → 그 실행을 선택한 결과 화면.
-- 목업: `docs/ui-realtime.dc.html`, `docs/ui-results.dc.html`. 배치·색·동작을 따르되 목업 속 가짜 시뮬레이션·데이터 로직은 쓰지 않는다. **목업과 이 문서가 다르면 이 문서가 우선.**
-- 1920×1080 기준. 작은 창은 화면 전체를 비율 유지 축소 (`transform: scale`, 가로 기준). 내부 스크롤 없음.
+- 목업: `design_ex/`의 실시간·실행 결과 화면 디자인. 배치·색·동작을 따르되 목업 속 가짜 시뮬레이션·데이터 로직은 쓰지 않는다. **목업과 이 문서가 다르면 이 문서가 우선.**
+- **창 크기에 맞춰 늘어나는 레이아웃** (100vw × 100vh, grid/flex). 고정 크기를 통째로 축소하지 않는다 (창 비율이 16:9가 아니면 여백이 생기므로).
+  - 고정: 헤더, 서버 지표 카드 높이, 하단 띠, 설정 패널 폭(360px), 결과 화면 오른쪽 열 폭.
+  - 실시간 화면: 구조도(노드·선 좌표 고정, 원래 폭 700)는 영역 높이에 맞춰 비율 유지로 커지고 줄어든다. 비율 범위 **0.8 ~ 1.25**. DB 영역이 남는 폭을 전부 가져간다 (최소 760px). 좌석 맵 칸 크기는 DB 영역에 맞춰 다시 계산 (상한 96×52, 남는 공간은 가운데 정렬).
+  - 구조도 비율이 0.8 아래로 내려가야 하는 작은 창에서만 화면 전체를 축소한다 (글자가 읽히는 크기 보장).
+  - 결과 화면 그래프는 영역 크기에 맞춰 그리고, 창 크기가 바뀌면 다시 그린다. 요청 점 canvas 해상도도 표시 크기에 맞춘다.
+  - **스크롤**: 메인 시각화(지표 카드, 구조도, DB, 그래프)는 스크롤·잘림 없음. 설정 패널의 설정 영역과 결과 화면 오른쪽 열만 세로 스크롤 허용.
+  - 상세 창은 가운데 정렬, 최대 높이는 창 높이에 맞춘다.
+  - 확인 크기: 1920×1080, 브라우저 최대화(주소창 포함), 2560×1440, 1440×860, 1280×720.
 - 바닐라 JS + CSS (외부 라이브러리 없음). 요청 점 애니메이션은 `requestAnimationFrame` + `<canvas>` 오버레이, 노드는 DOM.
 - 접근성: 버튼은 `<button>`, 입력은 `<label>` + `<input>`, 터치 대상 44px 이상. 서버에 연결이 안 되면 헤더에 경고 표시 (14.1). 색만으로 구분하지 않는다 (좌석은 라벨·막대·×n 병행).
 
@@ -977,16 +1035,17 @@ p95Max(낮음), p99Max(낮음), p95Rush(낮음), sloBreachSec(낮음), errPctRus
 |---|---|---|---|
 | 처리량 (예약 서버) | signals.rps | "대기열 폴링 n rps 별도" | 예약 서버 상세 |
 | 응답 시간 p95 | signals.p95 ms | "p50 · p99" | 예약 서버 상세 |
-| 에러율 | signals.errPct % | "409 n/s · 403 n/s · 5xx n" | 에러 상세 |
+| 에러율 | signals.errPct % (429 제외) | "409 n/s · 403 n/s · 5xx n · 429 n/s" | 에러 상세 |
 | 포화도 (DB 풀) | signals.poolPct % | "대기 n · 락 대기 n" | DB 상세 |
 - 오른쪽 최근 60초 막대. 숫자·막대·테두리 색은 `levels`.
+- 정지 대기 중(8.5)에는 상태 pill이 "정리 중", 카드 4개의 큰 숫자는 "–".
 
-**구조도** (1512×772 영역, 목업 배치)
+**구조도** (노드·선 배치는 목업 좌표 기준, 크기는 13장 규칙으로 맞춤)
 | 노드 | 큰 숫자 | 보조 | 테두리 |
 |---|---|---|---|
 | 대기열 서버 (왼쪽 위) | 대기 인원 | 입장 n/정원, 입장키 발급 n/s, 대기 점 격자 (1점 = 8명) | queue.status p95 < 20ms 기본 / < 100 warn / 그 외 bad |
 | 예약 서버 (가운데 위) | p95 ms | 처리 중 · rps, 최근 p95 막대 | levels p95·pool 중 나쁜 쪽 |
-| 사용자 (왼쪽 아래) | - | 도착 전 / 입장 / 이탈 / 예매 완료 | 없음 |
+| 사용자 (왼쪽 아래) | - | 6칸: 도착 전 / 대기 / 입장(입금 대기 포함) / 재방문 대기 / 이탈 / 예매 완료(예매 후 취소 대기 포함). **6칸 합 = 사용자 수**. 실행 중지·오류로 끝난 사용자는 머리글에 "· 중단 n" | 없음 |
 | 모의 결제사 (가운데 아래) | 승인 p95 | 인증 중 · 실패 | p95 > confirmMaxMs warn, timeouts > 0 bad |
 | DB (오른쪽) | 커넥션 풀 active/max | 풀 대기, 락 대기, 풀 칸, 좌석 상태 한 줄, 좌석 맵, 취소표 카운트다운·매진 배지 | levels.pool |
 
@@ -1025,12 +1084,12 @@ p95Max(낮음), p99Max(낮음), p95Rush(낮음), sloBreachSec(낮음), errPctRus
 | 예약 서버 | p50/p95/p99, 처리 중, 입장키 통과·403, 엔드포인트별 rps·p95 표, 스레드, 힙·GC, 스케줄러 4개, 알림 큐(대기·재시도·유실) |
 | DB | 풀 active/max, 풀 대기, 획득 p95, 락 대기 수·최대 시간, 초당 충돌, 좌석 5상태 |
 | 모의 결제사 | 인증 중, 승인 n/s, 승인 p50/p95/p99, 실패, 타임아웃, 결제 수단 비율 |
-| 사용자 | 도착 전·입장·이탈·예매 완료, 대기 중·입장 중 성향 구성 (막대) |
+| 사용자 | 6칸 값, 대기 중·입장 중·재방문 대기 성향 구성 (막대) |
 | 에러 | 에러율, 실패율, 8.3 분류별 n/s |
 
 **하단 띠** (높이 56px, 두 칸)
-- 실시간 이벤트: 최신 1건 + "전체 n건 ›" → 상세 창 최근 80건, 필터 전체/선점/반환/결제/시스템.
-- 누적 카운터: 반환 · 취소표 오픈 · 충돌 · Hardcore + "상세 ›" → 즉시 반환, 예매 취소, 취소표 오픈 횟수, 등급별 판매, 충돌 누적, Hardcore 잔류, 예매 완료, 카드 결제 실패 (설명 1줄씩).
+- 실시간 이벤트: 최신 1건 + "전체 n건 ›" → 상세 창 최근 80건, 필터 전체/선점/반환/결제/시스템. 최근 80건은 시뮬레이터가 보관해서 화면을 새로 열어도 보인다. 실행이 끝나도 유지하고, 새 실행 시작 때만 비운다. 같은 초 안에서는 최신이 위.
+- 누적 카운터: 반환 · 취소표 오픈 · 충돌 + "상세 ›" → 즉시 반환, 예매 취소, 취소표 오픈 횟수, 등급별 판매, 충돌 누적, 예매 완료, 카드 결제 실패 (설명 1줄씩). Hardcore 잔류 인원은 누적 값이 아니므로 사용자 노드 상세의 성향 막대에서만 보인다.
 
 **설정 패널** (오른쪽)
 - 맨 위 실행 이름. 버튼: **시작**, **화면 고정**(표시만 멈춤, 상단에 "화면 고정 중 · 실행은 계속"), **실행 중지**, **초기화**(설정 기본값).
@@ -1094,6 +1153,7 @@ server 통합 테스트는 **Testcontainers Postgres**. 시간은 `MutableClock`
 - 입금 대기 → 입금 → SOLD. 기한 경과 → RETURN_PENDING → returnDelay 후 일괄 AVAILABLE. 미입금 2건 시간차 → 같은 배치.
 - 예매 취소: 카드 → mock-pg cancel, 즉시 반환. 결제사 실패 → 502, 상태 그대로.
 - 판매 종료: 이후 `/seats`·새 `/holds` 409 SALE_ENDED, 기존 예약 confirm·입금·취소 처리, HELD 만료. 종료 전 `/seats`에 요약 필드 8개 (실제 서버, 계약 파일과 대조).
+- 좌석 조회 제한·캐시: 같은 kid 1초 안 두 번째 조회 429, 다른 kid는 통과, `/holds`는 제한 없음. 캐시 켬이면 1초 안 DB 읽기 1번. 캐시된 화면에서 이미 팔린 좌석 선점 → 409, 중복 판매 없음. 429는 에러율·실패율에 안 들어감.
 - 입장키: 6.3 표 각 실패 코드, 만료 키 + HELD 예약 → checkout·confirm 통과·새 holds 403, COMPLETED 후 같은 키 → KEY_REVOKED. 독립 재검증 카운터.
 - SlotNotifier: 대기열 서버 다운 → 재시도 3회 후 dropped, `droppedNotifications` 기록, 요청은 성공. 만료 스케줄러 → HOLD_CLEARED. 복구 스케줄러 CONFIRMED → COMPLETED.
 - timeScale 4: TTL·기한이 1/4 실제 시간.
@@ -1106,7 +1166,7 @@ server 통합 테스트는 **Testcontainers Postgres**. 시간은 `MutableClock`
 - 입장키 서명 성공/위조/다른 runEpoch/만료.
 - busy: HOLD_ACTIVE 후 TTL 지나도 유지(`slotsBusyOverTtl` 1, `expiredByBusyCap` 0) → HOLD_CLEARED 후 EXPIRED. HOLD_CLEARED 유실 → busy 상한에서 EXPIRED, `expiredByBusyCap` +1, `busyCapExpirations` 기록.
 - 이벤트 순서 뒤바뀜 무시, COMPLETED 이후 무시.
-- closeQueueOnSoldOut true/false, soldOut=false 후 재접수. 판매 종료 → 전원 CLOSED, 이후 enter CLOSED(SALE_ENDED).
+- closeQueueOnSoldOut true/false, soldOut=false 후 재접수. CLOSED된 ADMITTED의 키는 만료까지 유효. 판매 종료 → 전원 CLOSED, 이후 enter CLOSED(SALE_ENDED).
 - 내부 API 비밀 틀리면 401, 없는 kid ignored. `/queue/status`에 좌석 상황 필드 없음.
 
 **mock-pg**: seed 고정 시 실패율 비율, 타임아웃 지연, cancel 멱등, confirmLatency.
@@ -1177,7 +1237,7 @@ server 통합 테스트는 **Testcontainers Postgres**. 시간은 `MutableClock`
 |---|---|
 | 웹훅 결제 (v0.2) | 국내식 2단계로 교체 |
 | `standbyLimit`, 취소표 대기 정리, `STANDBY_FULL`, `standbyTrimmed`, I10 | 실제 서비스 패턴 아님, 이탈 성향과 중복 |
-| 매진 시 WAITING 전원 CLOSED, 매진 후 진입 즉시 CLOSED | `closeQueueOnSoldOut`(기본 false)로 대체 |
+| 매진 시 WAITING 전원 CLOSED, 매진 후 진입 즉시 CLOSED | `closeQueueOnSoldOut`(1.3.0부터 기본 true)로 대체 |
 | 잔여석 연동 입장 `resaleAdmitMultiplier`, 재진입 제한 `NO_SEATS` (v0.3.1) | 비현실적 |
 | 대기열 응답의 좌석 상황 필드 | 대기자는 좌석 상황을 모른다 (`/seats`에는 있음) |
 | 대기 중 이탈 판단 | 이탈은 입장 후에만 |
@@ -1185,4 +1245,4 @@ server 통합 테스트는 **Testcontainers Postgres**. 시간은 `MutableClock`
 | 예약 서버 내장 대기열, `queue_tokens`, `X-Queue-Token`, `NOT_ADMITTED`, `queue.enabled` | 대기열 서버 분리 (입장키 방식) |
 | `/queue/enter` 판매 종료 시 409 | 200 + CLOSED(SALE_ENDED) |
 | 시나리오 KPI 카드 6개, 하단 큰 패널 | 서버 지표 카드 4개, 하단 띠 + 상세 창 |
-| `docs/ui-reference.dc.html` | `ui-realtime`, `ui-results`로 교체 |
+| `docs/ui-reference.dc.html` | `design_ex/`의 디자인으로 교체 |
