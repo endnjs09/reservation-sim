@@ -222,3 +222,15 @@
 | **확인 근거** run-203fb855(1×, closeQueueOnSoldOut 켬): 대기열 snapshot에서 CLOSED(SOLD_OUT) 1,123개 중 399개가 이미 입장했던 토큰. 입장키는 서명 토큰이라 대기열이 CLOSED로 바꿔도 예약 서버에서 만료까지 유효. 토큰별 입장 시각·만료(420초)·종료 상태로 계산한 **유효 키 보유자 최대 357명(t=534), 그 시각 대기열 자리 0** (maxActive 200). 시계열 t=540: 대기열 active 0인데 시뮬레이터 입장 309명, 예약 서버 209 rps. run-706852b5도 t=444 대기열 active 0, 시뮬레이터 입장 199 | 사용자 추정 확인 | `QueueState.saleState` | - |
 | 매진으로 닫을 때 WAITING만 CLOSED(SOLD_OUT). ADMITTED는 바쁘든 아니든 그대로, 자리는 COMPLETED·LEFT·만료·busy 상한으로만 반납. 판매 종료 때 전원 CLOSED는 그대로 | 지시 | `QueueState.saleState` | 유효 키 보유자 ≤ maxActive |
 | 기존 테스트 `soldOutOptionClosesWaitingAndIdle…`(쉬는 입장자도 닫음)를 새 규칙으로 바꿈. 새 테스트: 매진·풀림 반복에도 유효 키 보유자 ≤ maxActive, 다시 열릴 때 실제 빈 자리만큼만 입장. 고치기 전 3개 실패(주기 1에 보유자 6 > 3) 확인 | AGENTS.md | `QueueStateTest` | - |
+
+## 재방문 대기 중 재시도 (2026-10-06, 사용자 지시 · SPEC 반영 전)
+
+| 결정한 것 | 어떻게 정했나 | 영향받는 코드 | 이유 |
+|---|---|---|---|
+| hardcore: 간격 = 페르소나 refreshSec × revisitRetryHardcoreMultiplier(2) × U(0.8,1.2), 시뮬레이션 초. persistent: 간격 U(revisitRetryPersistentSec 10~20). 시도 직전 1 − 0.5^(Δt ÷ persistentHalfLifeSec)로 그만둠(Δt = 직전 시도 또는 재방문 대기 시작 뒤 경과), 그만두면 그 사용자는 취소표 오픈 때만. casual·꺼짐은 재시도 없음·난수 안 씀 | 지시 | `RevisitRetry` | - |
+| 재시도 = 대기열 진입을 다시 하는 것. CLOSED(SOLD_OUT)면 다시 재방문 대기로 돌아가 새 간격. WAITING이면 기존 흐름(대기 이탈, 입장 후 이탈 성향). 재시도 때 이탈 성향 시계(churn)는 처음부터 | 지시 + 취소표 재방문과 같은 처리 | `VirtualUser.awaitRevisit` | - |
+| 아직 굴리지 않은 취소표 오픈이 있으면 그 판단(revisitProb)을 먼저 하고, 재시도로 줄에 들어갈 때 그 시각의 오픈은 이미 본 것으로 표시해 다시 굴리지 않음 | 지시 "이미 줄에 있거나 입장한 사람은 revisitProb를 다시 굴리지 않음" | `VirtualUser.awaitRevisit` | - |
+| 판단 난수는 사용자별 별도 스트림(대기 이탈과도 다른 상수) | 지시 | `RevisitRetry.stream` | 같은 seed 비교 |
+| 집계: events.revisitRetries(시도 수, 실시간 이벤트 목록에는 남기지 않음 — 초당 수십 건이라), revisitRetryAdmitted(재시도로 들어간 줄에서 입장한 수). 시계열 `revisit.retriesRps`·`retryAdmittedRps`, `queue.enterRps`(대기열 진입 요청) 추가. 재시도가 막혀 돌아올 때 "좌석 없이 퇴장" 이벤트를 다시 남기지 않음 | 지시 + 이벤트 목록 범람 방지 | `RunStats.count`, `RunMeasurements`, `RunStore.series` 필드 목록 | - |
+| 설정 revisitRetryEnabled(새 실행 true, 값 없는 기록 false)·revisitRetryHardcoreMultiplier(2.0)·revisitRetryPersistentSec(10~20). 화면 시나리오 탭 > 이탈 성향 | 지시 | `RunConfig`, `app.js` | - |
+| 테스트: 엔진 테스트(매진 중 hardcore 재시도 약 60회·예약 서버 요청 0, casual·끔 0회)가 연결 전 실패 확인, 재시도 경로를 끈 변형에서 실패 확인 후 되돌림. 간격·편차, persistent 180초에 약 50% 중단(±0.03), hardcore 안 그만둠, 별도 스트림 | AGENTS.md | `RevisitRetryTest` | - |

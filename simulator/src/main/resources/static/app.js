@@ -201,6 +201,10 @@ const groups = {
       row(g, "대기 이탈", [{ path: "queueAbandonEnabled", type: "checkbox" }]);
       row(g, "대기 반감기 C / P (초)", [{ path: "queueHalfLifeSec.casual", min: 0.001, step: "any" }, { path: "queueHalfLifeSec.persistent", min: 0.001, step: "any", aria: "Persistent" }]);
       row(g, "줄 멈춤 창 (초) / 최소 진행", [{ path: "queueStallWindowSec", min: 0.001, step: "any" }, { path: "queueStallMinProgress", max: 1, step: "any", sep: "/", aria: "최소 진행 비율" }]);
+      // 재방문 대기 중 재시도: hardcore는 새로고침 간격×배수(±20%), persistent는 간격 범위마다 시도하다 반감기로 그만둠. casual 없음
+      row(g, "재방문 재시도", [{ path: "revisitRetryEnabled", type: "checkbox" }]);
+      row(g, "Hardcore 간격 (새로고침 ×)", [{ path: "revisitRetryHardcoreMultiplier", min: 0.001, step: "any" }]);
+      row(g, "Persistent 간격 (초)", [{ path: "revisitRetryPersistentSec.min", min: 0.001, step: "any" }, { path: "revisitRetryPersistentSec.max", step: "any", sep: "~", aria: "최대" }]);
     }],
   ],
   advanced: [

@@ -86,9 +86,10 @@ class QueueAbandonTest {
                 legacy.churnMix(),legacy.casualLeaveSec(),legacy.persistentHalfLifeSec(),legacy.revisitProb(),legacy.maxSeatsPerUser(),legacy.ticketCountMix(),
                 legacy.adjacentRequiredRate(),legacy.paymentMix(),legacy.depositDeadlineSec(),legacy.depositNoPayRate(),legacy.returnDelaySec(),
                 legacy.reopenWindowSec(),legacy.cancelAfterPurchaseRate(),legacy.priceStepSec(),legacy.queueMode(),legacy.busyMaxExtraSec(),
-                legacy.requestTimeoutMs(),legacy.label(),legacy.notes(),legacy.thresholds(),null,null,null,null,null,null,null);
+                legacy.requestTimeoutMs(),legacy.label(),legacy.notes(),legacy.thresholds(),null,null,null,null,null,null,null,null,null,null);
         assertThat(stored.queueAbandonEnabled()).isFalse(); // 이 규칙 전에 저장된 실행
         assertThat(stored.seatsRateLimitEnabled()).isFalse();assertThat(stored.seatsCacheSec()).isZero(); // 새로고침 제한·캐시 전에 저장된 실행
+        assertThat(stored.revisitRetryEnabled()).isFalse(); // 재방문 재시도 전에 저장된 실행
     }
 
     private record EngineRun(Summary summary,List<String> calls) {}

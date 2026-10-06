@@ -143,7 +143,7 @@ public final class RunStore {
     public synchronized List<Map<String,Object>> series(String id,String fields,int step) throws IOException {
         if(step<1 || step>86400) throw new ApiFailure(400,"INVALID_STEP","step 범위는 1~86400입니다.");
         Set<String> selected=fields==null || fields.isBlank() ? Set.of() : Set.of(fields.split(","));
-        if(!Set.of("signals","server","queue","client","mockPg","users","seats","t","wallMs","phase").containsAll(selected)) throw new ApiFailure(400,"INVALID_FIELDS","알 수 없는 시계열 필드입니다.");
+        if(!Set.of("signals","server","queue","client","mockPg","users","seats","revisit","t","wallMs","phase").containsAll(selected)) throw new ApiFailure(400,"INVALID_FIELDS","알 수 없는 시계열 필드입니다.");
         var groups=new TreeMap<Long,List<Map<String,Object>>>();
         for(var line:lines(path(id).resolve("timeseries.ndjson"))) {
             long t=((Number)line.get("t")).longValue();groups.computeIfAbsent(t/step,k -> new ArrayList<>()).add(line);

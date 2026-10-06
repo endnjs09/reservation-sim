@@ -14,7 +14,7 @@ public final class RunStats {
     public enum UserState { arriving, waiting, admitted_browsing, holding, authenticating, confirming, pending_deposit, cancel_wait, departed, done }
     public enum Outcome { confirmed, soldOut, gaveUp, abandoned, incomplete, error }
     public enum Milestone { depositPaid, depositExpired, canceledAfterPurchase, revisited, queueAbandoned }
-    private static final String[] EVENTS = {"conflicts", "refreshes", "requeues", "authFailed", "declined", "holdExpired", "revisits", "immediateReturnsSeen", "reopenSeen", "saleEndFallback", "cancelPendingAtStop", "queueAbandons", "queueAbandonsStalled", "rateLimited"};
+    private static final String[] EVENTS = {"conflicts", "refreshes", "requeues", "authFailed", "declined", "holdExpired", "revisits", "immediateReturnsSeen", "reopenSeen", "saleEndFallback", "cancelPendingAtStop", "queueAbandons", "queueAbandonsStalled", "rateLimited", "revisitRetries", "revisitRetryAdmitted"};
     private static final String[] ENDPOINTS = {"server.reset", "pg.reset", "pg.config", "queue.reset", "queue.enter", "queue.status",
             "queue.leave", "seats", "holds", "release", "checkout", "auth", "confirm", "reservation", "deposit", "deposit.pay", "reservation.cancel"};
     private final RunConfig config;
@@ -131,6 +131,8 @@ public final class RunStats {
         events.get(name).increment();
         if (!name.equals("refreshes")) note(user, message);
     }
+    /** 사건 수만 센다 (실시간 이벤트 목록에 남기지 않음: 자주 일어나는 재시도 등). */
+    public void count(String name) { events.get(name).increment(); }
     public void note(String user, String message) {
         long now = time.nanoTime();
         synchronized (recent) {

@@ -44,6 +44,8 @@ public final class VirtualUser implements Runnable {
     private final SeatPicker picker=new SeatPicker();
     private static final String QUEUE_ABANDONED="QUEUE_ABANDONED";
     private final QueueAbandon queueAbandon;
+    private final RevisitRetry revisitRetry;
+    private boolean retrying; // 재방문 재시도로 대기열에 다시 들어간 중
     private final java.util.Set<Instant> consideredBatches=new java.util.HashSet<>();
     private String token,admissionKey,closedReason="";
     private boolean saleEnded,purchaseStarted;
@@ -52,6 +54,7 @@ public final class VirtualUser implements Runnable {
         this.index=index;this.profile=profile;this.config=config;this.http=http;this.control=control;this.stats=stats;
         this.time=time;this.revisits=revisits;this.churn=new ChurnPolicy(profile.churn(),config,profile.random());
         this.queueAbandon=QueueAbandon.forUser(config,index,profile.churn());
+        this.revisitRetry=RevisitRetry.forUser(config,index,profile.churn(),profile.persona());
         userId="u-%04d".formatted(index+1);
     }
     @Override public void run() {
@@ -87,7 +90,9 @@ public final class VirtualUser implements Runnable {
                 case "CLOSED" -> { closedReason=response.body().get("reason") instanceof String reason ? reason : "";return false; }
                 case "ADMITTED" -> {
                     if(!response.body().containsKey("admissionKey")) { response=http.send("queue.status",QUEUE,"GET","/queue/status?token="+token,Map.of(),null);requireOk(response);continue; }
-                    admissionKey=response.text("admissionKey");stats.state(index,admitted_browsing);return true; }
+                    admissionKey=response.text("admissionKey");stats.state(index,admitted_browsing);
+                    if(retrying) { stats.count("revisitRetryAdmitted");retrying=false; }
+                    return true; }
                 case "WAITING" -> {
                     if(polled && queueAbandon.leave(time.nanoTime(),position(response))) {
                         leave();closedReason=QUEUE_ABANDONED;stats.milestone(index,RunStats.Milestone.queueAbandoned);
@@ -223,10 +228,24 @@ public final class VirtualUser implements Runnable {
         }
     }
     private boolean awaitRevisit() throws InterruptedException {
-        stats.state(index,departed);stats.note(userId,"좌석 없이 퇴장 · 취소표 재방문 대기");
+        // 재시도가 막혀 돌아온 것이면(매진 중 CLOSED) 이벤트를 다시 남기지 않는다
+        if(!retrying) stats.note(userId,"좌석 없이 퇴장 · 취소표 재방문 대기");
+        stats.state(index,departed);retrying=false;
+        // 재방문 대기 중 재시도: 취소표 오픈과 별개로 다음 간격에 대기열 진입을 다시 시도 (hardcore·persistent)
+        long lastAttempt=time.nanoTime(),nextRetry=revisitRetry.active() ? lastAttempt+config.realMillis(revisitRetry.nextIntervalSimMillis())*1_000_000 : Long.MAX_VALUE;
         while(true) {
             control.check();var signal=revisits.signal();if(!time.instant().isBefore(signal.saleEndAt())) return false;
             var release=signal.releaseAt();
+            long now=time.nanoTime();
+            if(nextRetry!=Long.MAX_VALUE && now>=nextRetry && (release==null || consideredBatches.contains(release))) {
+                double elapsedSim=(now-lastAttempt)/1e9*config.timeScale();lastAttempt=now;
+                if(!revisitRetry.quitsBeforeAttempt(elapsedSim)) {
+                    stats.count("revisitRetries");retrying=true;churn.reset();
+                    if(release!=null) consideredBatches.add(release); // 줄에 들어간 뒤 그 취소표 오픈으로 revisitProb를 다시 굴리지 않음
+                    return true;
+                }
+                nextRetry=Long.MAX_VALUE; // persistent가 그만둠: 이제 취소표 오픈 때만
+            }
             if(release!=null && consideredBatches.add(release) && profile.random().nextDouble()<config.revisitProb().get(churn.type().name())) {
                 Instant target=release.plusMillis(config.realMillis(Math.round(profile.random().nextDouble(-5,5)*1000)));
                 boolean valid=true;
@@ -241,7 +260,7 @@ public final class VirtualUser implements Runnable {
                 churn.reset();stats.milestone(index,RunStats.Milestone.revisited);stats.event("revisits",userId,"취소표 재방문");
                 stats.event("requeues",userId,"재진입");return true;
             }
-            control.pause(1000);
+            control.pause(nextRetry==Long.MAX_VALUE ? 1000 : Math.min(1000,Math.max(1,(nextRetry-time.nanoTime())/1_000_000)));
         }
     }
     private void pauseUntil(Instant target) throws InterruptedException {

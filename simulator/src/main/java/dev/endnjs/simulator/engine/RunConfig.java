@@ -18,7 +18,8 @@ public record RunConfig(int rows, int cols, List<Grade> grades, int users, List<
         Integer depositDeadlineSec, Double depositNoPayRate, Integer returnDelaySec, Integer reopenWindowSec,
         Double cancelAfterPurchaseRate, Map<String,Persona.Range> priceStepSec, String queueMode, Integer busyMaxExtraSec, Integer requestTimeoutMs, String label, String notes, Thresholds thresholds,
         Boolean queueAbandonEnabled, Map<String,Double> queueHalfLifeSec, Double queueStallWindowSec, Double queueStallMinProgress,
-        Boolean seatsRateLimitEnabled, Double seatsMinIntervalSec, Integer seatsCacheSec) {
+        Boolean seatsRateLimitEnabled, Double seatsMinIntervalSec, Integer seatsCacheSec,
+        Boolean revisitRetryEnabled, Double revisitRetryHardcoreMultiplier, Persona.Range revisitRetryPersistentSec) {
     public record Grade(String name, int rows, int price) {
         public Grade {
             require(name != null && Set.of("VIP", "S", "A", "B").contains(name) && rows >= 0 && price >= 0, "Invalid grade");
@@ -93,6 +94,11 @@ public record RunConfig(int rows, int cols, List<Grade> grades, int users, List<
         seatsMinIntervalSec = seatsMinIntervalSec == null ? 1.0 : seatsMinIntervalSec;
         seatsCacheSec = seatsCacheSec == null ? 0 : seatsCacheSec;
         require(Double.isFinite(seatsMinIntervalSec) && seatsMinIntervalSec > 0 && seatsCacheSec >= 0 && seatsCacheSec <= 60,"Invalid seats refresh/cache");
+        // 재방문 대기 중 재시도 (docs/DECISION_CLAUDE.md). 값이 없는 저장 기록은 이 규칙 전 실행이라 꺼짐. 새 실행 기본: 켬, hardcore 새로고침×2, persistent 10~20초
+        revisitRetryEnabled = revisitRetryEnabled != null && revisitRetryEnabled;
+        revisitRetryHardcoreMultiplier = revisitRetryHardcoreMultiplier == null ? 2.0 : revisitRetryHardcoreMultiplier;
+        revisitRetryPersistentSec = revisitRetryPersistentSec == null ? new Persona.Range(10,20) : revisitRetryPersistentSec;
+        require(Double.isFinite(revisitRetryHardcoreMultiplier) && revisitRetryHardcoreMultiplier > 0 && revisitRetryPersistentSec.min() > 0,"Invalid revisit retry");
         timeScale = timeScale == null ? 1 : timeScale;
         saleDurationSec = saleDurationSec == null ? 1200 : saleDurationSec;
         require(rows >= 1 && rows <= 26 && cols > 0 && (long) rows * cols <= Integer.MAX_VALUE, "Invalid seats");
@@ -139,7 +145,8 @@ public record RunConfig(int rows, int cols, List<Grade> grades, int users, List<
                 .9,Map.of("card",85,"deposit",15),60,.4,30,50,.02,
                 Map.of("fast",new Persona.Range(2,5),"normal",new Persona.Range(5,15),"slow",new Persona.Range(15,40)),"EXTERNAL",510,10000,"","",Thresholds.defaults(),
                 true,Map.of("casual",180.0,"persistent",600.0),60.0,.05,
-                true,1.0,0);
+                true,1.0,0,
+                true,2.0,new Persona.Range(10,20));
     }
     public java.time.Duration realDuration(int simulationSeconds) {
         return java.time.Duration.ofSeconds(simulationSeconds).dividedBy(timeScale);

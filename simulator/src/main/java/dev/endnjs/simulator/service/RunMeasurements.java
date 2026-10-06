@@ -12,7 +12,7 @@ public final class RunMeasurements {
     private double rushP95,rushErr;
     private String phase;
     private boolean slo,pool;
-    private long dropped,reopens,busyCaps;
+    private long dropped,reopens,busyCaps,lastRetries,lastRetryAdmitted,lastSampleMs=-1;
     private Long soldOutAt;
     public RunMeasurements(RunConfig config) { this.config=config; }
     public record Frame(Map<String,Object> signals,Map<String,Object> series,List<Map<String,Object>> events) {}
@@ -80,10 +80,16 @@ public final class RunMeasurements {
         var statusEndpoint=object(object(externalQueue.get("endpoints")).get("queue.status"));
         for(String k:List.of("waiting","active","busy","slotsBusyOverTtl","expiredByBusyCap","admittedThisTick")) queue.put(k,externalQueue.get(k));
         queue.put("statusRps",statusEndpoint.get("rps"));queue.put("statusP95",object(statusEndpoint.get("latency")).get("p95"));
+        queue.put("enterRps",object(object(externalQueue.get("endpoints")).get("queue.enter")).get("rps")); // 대기열 진입 요청 (재방문 재시도 포함)
         var clientP95=new TreeMap<String,Object>();client.histogram().endpoints().forEach((k,v) -> clientP95.put(k,v.latency().p95()));
         var clientSeries=new LinkedHashMap<String,Object>();clientSeries.put("rps",client.histogram().total().rps());clientSeries.put("p95",clientP95);clientSeries.put("timeout",client.histogram().total().errorClasses().get("timeout"));clientSeries.put("transport",client.histogram().total().errorClasses().get("transport"));clientSeries.put("rateLimited",client.histogram().total().errorClasses().get("rateLimited"));
         var series=new LinkedHashMap<String,Object>();series.put("t",t);series.put("wallMs",elapsedMs);series.put("phase",next);series.put("signals",signals);series.put("server",serverSeries);series.put("queue",queue);series.put("client",clientSeries);
         series.put("mockPg",Map.of("authInflight",live.pg().getOrDefault("authInflight",0L),"confirmInflight",pg.getOrDefault("confirmInflight",0)));series.put("users",live.users());
+        // 재방문 대기 중 재시도: 누적 사건 수의 초당 값 (표본 사이 실제 경과 기준)
+        long retries=live.events().getOrDefault("revisitRetries",0L),retryAdmitted=live.events().getOrDefault("revisitRetryAdmitted",0L);
+        double sec=lastSampleMs<0 ? 1 : Math.max(.001,(elapsedMs-lastSampleMs)/1000.0);
+        series.put("revisit",Map.of("retriesRps",round((retries-lastRetries)/sec),"retryAdmittedRps",round((retryAdmitted-lastRetryAdmitted)/sec)));
+        lastRetries=retries;lastRetryAdmitted=retryAdmitted;lastSampleMs=elapsedMs;
         var seats=new LinkedHashMap<String,Object>();for(var k:Map.of("A","availableSeats","H","heldSeats","D","pendingDepositSeats","R","returnPendingSeats","S","soldSeats").entrySet()) seats.put(k.getKey(),server.get(k.getValue()));series.put("seats",seats);
         return new Frame(Collections.unmodifiableMap(signals),Collections.unmodifiableMap(series),events);
     }
