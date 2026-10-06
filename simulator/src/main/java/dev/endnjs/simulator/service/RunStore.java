@@ -151,6 +151,15 @@ public final class RunStore {
         var result=new ArrayList<Map<String,Object>>();
         groups.forEach((bucket,rows) -> {
             var row=aggregate(rows,"");row.put("t",bucket*step);
+            // 9.4대로 N초 평균은 그대로 두고, 평균에 묻히는 1초짜리 최대를 구간 최대값으로 곁에 남긴다 (추가 필드)
+            if(step>1 && row.get("signals") instanceof Map<?,?> aggregated) {
+                var signals=new LinkedHashMap<String,Object>(object(aggregated));
+                for(String key:List.of("rps","errPct","poolPct")) {
+                    var values=rows.stream().map(r -> object(r.get("signals")).get(key)).filter(Number.class::isInstance).mapToDouble(v -> ((Number)v).doubleValue());
+                    var max=values.max();if(max.isPresent()) signals.put(key+"Max",max.getAsDouble());
+                }
+                row.put("signals",signals);
+            }
             if(!selected.isEmpty()) row.keySet().removeIf(k -> !selected.contains(k) && !Set.of("t","wallMs","phase").contains(k));
             result.add(row);
         });return result;

@@ -624,8 +624,8 @@ function render(tick) {
     ["err", sig.errPct, levels.err, `409 ${num(s409)}/s · 403 ${num(s403)}/s · 5xx ${num(s5xx)} · 429 ${num(s429)}/s`, 100],
     ["pool", sig.poolPct, levels.pool, `대기 ${num(sig.poolPending)} · 락 대기 ${num(sig.lockWaits)}`, 100],
   ];
-  // 정리 중에는 숫자 카드를 비운다 (엔진이 끝난 뒤 마지막 값이 멈춘 채 남아 보이지 않게)
-  if (finalizing) for (const c of cards) { c[1] = null; c[2] = null; c[3] = "실행 끝 · 남은 선점·결제 정리 중"; }
+  // 정리 중·완료·중지·실패에는 숫자 카드를 비운다: 마지막 1초 값(판매 종료 409 등)이 멈춘 채 빨갛게 남지 않게. 결과는 실행 결과 탭에서
+  if (finalizing || finished) for (const c of cards) { c[1] = null; c[2] = null; c[3] = finalizing ? "실행 끝 · 남은 선점·결제 정리 중" : "실행 끝 · 결과는 실행 결과 탭에서"; }
   for (const [k, v, lv, sub, max] of cards) {
     text(`v-${k}`, k === "p95" ? dec(v) : num(v));
     text(`s-${k}`, sub);

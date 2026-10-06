@@ -57,8 +57,8 @@ public class RequestMetricsFilter extends OncePerRequestFilter {
             if (path.equals("/payments/confirm")) return "confirm";
             if (path.matches("/holds/[0-9]+/checkout")) return "checkout";
             if (path.matches("/holds/[0-9]+/deposit")) return "deposit";
-            if (path.matches("/deposits/[0-9]+/pay")) return "deposit.pay";
-            if (path.matches("/reservations/[0-9]+/cancel")) return "reservation.cancel";
+            if (path.matches("/deposits/[0-9]+/pay")) return "depositPay"; // 8.2 키 이름 (예전 deposit.pay 별칭은 없앰)
+            if (path.matches("/reservations/[0-9]+/cancel")) return "cancel";
             if (path.matches("/holds/[0-9]+/release")) return "release";
         }
         return null;

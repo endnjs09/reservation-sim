@@ -184,10 +184,10 @@
 
   // ───────── 그래프 4개 ─────────
   const CHARTS = [
-    { key: "rps", title: "처리량", unit: "rps · 예약 서버", get: (r) => r.signals?.rps, fmt: (v) => `${num(v)} rps` },
+    { key: "rps", title: "처리량", unit: "rps · 예약 서버", get: (r) => r.signals?.rps, max: (r) => r.signals?.rpsMax, fmt: (v) => `${num(v)} rps` },
     { key: "p95", title: "응답 시간", unit: "ms", get: (r) => r.signals?.p95, sub: (r) => r.signals?.p99, subName: "p99", fmt: (v) => `${dec(v)}ms`, thr: (t) => [[t.p95SloMs, `SLO ${num(t.p95SloMs)}ms`, "#FF8A8A"]] },
-    { key: "err", title: "에러율", unit: "% · 연하게 = 409 충돌", get: (r) => r.signals?.errPct, sub: (r) => conflictPct(r), subName: "충돌", fmt: (v) => `${dec(v)}%`, thr: (t) => [[t.errWarnPct, `경고 ${num(t.errWarnPct)}%`, "#F5A524"], [t.errBadPct, `나쁨 ${num(t.errBadPct)}%`, "#FF8A8A"]], fixedMax: 100 },
-    { key: "pool", title: "DB 커넥션 풀 사용률", unit: "% · 막대 = 풀 대기", get: (r) => r.signals?.poolPct, bars: (r) => r.signals?.poolPending, fmt: (v) => `${num(v)}%`, thr: (t) => [[t.poolBadPct, `포화 ${num(t.poolBadPct)}%`, "#FF8A8A"]], fixedMax: 100 },
+    { key: "err", title: "에러율", unit: "% · 연하게 = 409 충돌", get: (r) => r.signals?.errPct, max: (r) => r.signals?.errPctMax, sub: (r) => conflictPct(r), subName: "충돌", fmt: (v) => `${dec(v)}%`, thr: (t) => [[t.errWarnPct, `경고 ${num(t.errWarnPct)}%`, "#F5A524"], [t.errBadPct, `나쁨 ${num(t.errBadPct)}%`, "#FF8A8A"]], fixedMax: 100 },
+    { key: "pool", title: "DB 커넥션 풀 사용률", unit: "% · 막대 = 풀 대기", get: (r) => r.signals?.poolPct, max: (r) => r.signals?.poolPctMax, bars: (r) => r.signals?.poolPending, fmt: (v) => `${num(v)}%`, thr: (t) => [[t.poolBadPct, `포화 ${num(t.poolBadPct)}%`, "#FF8A8A"]], fixedMax: 100 },
   ];
   function conflictPct(row) {
     const rps = row.signals?.rps, c = row.server?.errorClasses?.conflict;
@@ -219,7 +219,7 @@
       entries.forEach((e, i) => {
         const color = TAG_COLOR[cmp ? i : 0];
         if (cmp) legend(color, `${"AB"[i]} ${shortName(e.run)}`);
-        else { legend(color, def.key === "p95" ? "p95" : def.key === "err" ? "전체" : def.key === "pool" ? "사용률" : "rps"); if (def.sub) legend(color, def.subName, 0.4); if (def.bars) legend("#FF8A8A", "풀 대기", 0.6, true); }
+        else { legend(color, def.key === "p95" ? "p95" : def.key === "err" ? "전체" : def.key === "pool" ? "사용률" : "rps"); if (def.sub) legend(color, def.subName, 0.4); if (def.max && e.series?.some((r) => ok(def.max(r)))) legend(color, "구간 최대", 0.45); if (def.bars) legend("#FF8A8A", "풀 대기", 0.6, true); }
       });
       card.append(head);
       if (entries.some((e) => !e.series?.length)) { card.append(el("p", "r-nodata", entries.every((e) => e.legacy) ? "구버전 기록 · 시계열 없음" : "시계열이 없습니다")); if (entries.every((e) => !e.series?.length)) continue; }
@@ -233,7 +233,9 @@
     const th = entries[0].run.thresholds || entries[0].run.config?.thresholds || {};
     const all = entries.map((e) => e.series || []);
     const maxT = Math.max(Number(entries[0].run.config?.saleDurationSec) || 0, ...all.flat().map((r) => r.t));
-    const values = all.flat().flatMap((r) => [def.get(r), def.sub && !cmp ? def.sub(r) : null]).filter(ok).map(Number);
+    // 줄여 그린 구간(step>1)은 평균선 위로 구간 최대값(…Max, 9.4 추가 필드)을 연하게 그리고 최고점도 그 값으로 잡는다. p95는 원래 구간 최대
+    const peakOf = (r) => { const m = def.max ? def.max(r) : null; return ok(m) ? m : def.get(r); };
+    const values = all.flat().flatMap((r) => [peakOf(r), def.sub && !cmp ? def.sub(r) : null]).filter(ok).map(Number);
     const thrVals = def.thr ? def.thr(th).map(([v]) => Number(v)).filter(ok) : [];
     const maxV = def.fixedMax ? Math.min(def.fixedMax, Math.max(10, ...values, ...thrVals) * 1.05) : Math.max(1, ...values, ...thrVals) * 1.08;
     const ticks = niceTicks(maxV), top = ticks.at(-1);
@@ -268,9 +270,10 @@
     entries.forEach((e, i) => {
       const rows = all[i], color = TAG_COLOR[cmp ? i : 0];
       if (def.sub && !cmp) svg.append(s("path", { d: path(rows, def.sub), fill: "none", stroke: color, "stroke-width": 1.5, opacity: 0.4 }));
+      if (def.max && rows.some((r) => ok(def.max(r)))) svg.append(s("path", { d: path(rows, def.max), fill: "none", stroke: color, "stroke-width": 1.2, opacity: 0.45, "stroke-dasharray": "3 3" }));
       svg.append(s("path", { d: path(rows, def.get), fill: "none", stroke: color, "stroke-width": 2.4, "stroke-linejoin": "round" }));
-      let best = null; for (const r of rows) { const v = def.get(r); if (ok(v) && (!best || Number(v) > Number(def.get(best)))) best = r; }
-      if (best) peaks.push({ x: x(best.t), y: y(Number(def.get(best))), v: def.get(best), color });
+      let best = null; for (const r of rows) { const v = peakOf(r); if (ok(v) && (!best || Number(v) > Number(peakOf(best)))) best = r; }
+      if (best) peaks.push({ x: x(best.t), y: y(Number(peakOf(best))), v: peakOf(best), color });
     });
     // 최고점 원 + 값 (겹치면 비킴)
     peaks.forEach((p, i) => {
@@ -315,12 +318,14 @@
           body.append(title);
           // 시뮬레이터(클라이언트) 엔드포인트 이름은 서버와 다른 것이 있다
           const CLIENT_KEY = { depositPay: "deposit.pay", cancel: "reservation.cancel" };
-          const ep = r.server?.endpoints || {}, clientRaw = r.client?.p95 || {}, client = Object.fromEntries(Object.keys(ENDPOINT_NAMES).map((k) => [k, clientRaw[k] ?? clientRaw[CLIENT_KEY[k]]]));
+          // 서버도 예전 기록은 deposit.pay·reservation.cancel 이름만 있을 수 있다 (읽기는 유지)
+          const epRaw = r.server?.endpoints || {}, ep = Object.fromEntries(Object.keys(ENDPOINT_NAMES).map((k) => [k, epRaw[k] ?? epRaw[CLIENT_KEY[k]]]));
+          const clientRaw = r.client?.p95 || {}, client = Object.fromEntries(Object.keys(ENDPOINT_NAMES).map((k) => [k, clientRaw[k] ?? clientRaw[CLIENT_KEY[k]]]));
           const keys = Object.keys(ENDPOINT_NAMES).filter((k) => ep[k] || client[k]);
           let head, data;
           if (def.key === "p95" && source === "client") { head = ["엔드포인트", "클라이언트 p95 ms"]; data = keys.map((k) => [ENDPOINT_NAMES[k], dec(client[k])]); }
           else if (def.key === "err") { head = ["엔드포인트", "rps", "오류 (초당)"]; data = keys.map((k) => [ENDPOINT_NAMES[k], dec(ep[k]?.rps), Object.entries(ep[k]?.err || {}).filter(([, v]) => v).map(([c, v]) => `${c} ${dec(v)}`).join(" · ") || "–"]); }
-          else if (def.key === "pool") { head = ["항목", "값"]; data = [["풀 사용률", `${num(r.signals?.poolPct)}%`], ["풀 대기", num(r.signals?.poolPending)], ["커넥션 획득 p95", `${dec(r.server?.pool?.acquireP95)} ms`], ["락 대기", `${num(r.server?.db?.lockWaits)} · 최대 ${num(r.server?.db?.lockWaitMaxMs)} ms`], ["스레드 사용률", `${dec(r.signals?.threadsBusyPct)}%`]]; }
+          else if (def.key === "pool") { head = ["항목", "값"]; data = [["풀 사용률", `${num(r.signals?.poolPct)}%${ok(r.signals?.poolPctMax) ? ` (구간 최대 ${num(r.signals.poolPctMax)}%)` : ""}`], ["풀 대기", num(r.signals?.poolPending)], ["커넥션 획득 p95", `${dec(r.server?.pool?.acquireP95)} ms`], ["락 대기", `${num(r.server?.db?.lockWaits)} · 최대 ${num(r.server?.db?.lockWaitMaxMs)} ms`], ["스레드 사용률", `${dec(r.signals?.threadsBusyPct)}%`]]; }
           else { head = ["엔드포인트", "rps", "서버 p95 ms", "p99 ms"]; data = keys.map((k) => [ENDPOINT_NAMES[k], dec(ep[k]?.rps), dec(ep[k]?.p95), dec(ep[k]?.p99)]); }
           const tbl = el("table", "dtable"), tr = el("tr"); head.forEach((h) => tr.append(el("th", "", h))); tbl.append(tr);
           for (const d of data) { const row = el("tr"); d.forEach((v) => row.append(el("td", "", v))); tbl.append(row); }
@@ -399,7 +404,8 @@
       const [, label, unit] = METRIC_LABELS.find(([k]) => k === m.key) || [m.key, m.label, m.unit];
       hd(label, "");
       const vals = cmp ? [m.a, m.b] : [m.a];
-      vals.forEach((v, i) => hd(showValue(m.key, unit, v), `n${cmp && m.winner === "ab"[i] ? " win" : ""}`));
+      // 최대 풀 사용률 옆에 그 초의 풀 대기 수 (순간값인지 실제 포화인지)
+      vals.forEach((v, i) => { const p = m.key === "poolPctMax" ? entries[i]?.run?.signals?.poolPendingAtMax : null; hd(`${showValue(m.key, unit, v)}${ok(p) ? ` · 대기 ${num(p)}` : ""}`, `n${cmp && m.winner === "ab"[i] ? " win" : ""}`); });
       if (cmp) {
         const d = m.diffPct, worse = ok(d) && m.better && d !== 0 && ((m.better === "low" && d > 0) || (m.better === "high" && d < 0));
         hd(ok(d) ? `${d > 0 ? "+" : ""}${dec(d)}%` : "–", `n${worse ? " worse" : ok(d) && m.better && d !== 0 ? " better" : ""}`);

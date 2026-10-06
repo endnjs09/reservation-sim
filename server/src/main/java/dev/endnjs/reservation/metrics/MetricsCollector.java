@@ -17,7 +17,7 @@ public class MetricsCollector {
             "declines", "notPayable", "expiredByScheduler", "recoveryAttempts", "recovered", "immediateReturns", "userCancels", "depositsRequested", "depositsPaid",
             "depositsExpired", "reopenCount", "reopenSeats", "acceptedInvalidKeys", "slotNotifyDropped"};
     private static final String[] ENDPOINTS = {"seats", "holds",
-            "checkout", "confirm", "release", "reservation", "deposit", "deposit.pay", "reservation.cancel"};
+            "checkout", "confirm", "release", "reservation", "deposit", "depositPay", "cancel"};
     private final Clock clock;
     private final java.util.function.LongSupplier nanoTime;
     private volatile State state;
@@ -147,8 +147,7 @@ public class MetricsCollector {
             pruneEvents(current,now);
             current.recentEvents.forEach(event -> events.merge(event.name(),(long)event.count(),Long::sum));
         }
-        endpoints.put("depositPay",endpoints.get("deposit.pay"));endpoints.put("cancel",endpoints.get("reservation.cancel"));
-        var cumulative=new java.util.LinkedHashMap<>(histograms.cumulative());cumulative.put("depositPay",cumulative.get("deposit.pay"));cumulative.put("cancel",cumulative.get("reservation.cancel"));
+        var cumulative=new java.util.LinkedHashMap<>(histograms.cumulative());
         return new WindowSnapshot(Map.copyOf(endpoints), histograms.endpoints().values().stream().mapToInt(RequestHistograms.Endpoint::inflight).sum(),
                 new Pg(pgHist.endpoints().get("confirm").inflight(),pgHist.endpoints().get("confirm").avgMs(),pgHist.endpoints().get("confirm").latency(),pgHist.endpoints(),pgHist.cumulative(),pgHist.endpoints().values().stream().mapToLong(e -> e.errorClasses().getOrDefault("timeout",0L)).sum()), Map.copyOf(current.schedulers), Map.copyOf(conflicts),
                 current.counters.get("holdSuccess").sum() > 0, Map.copyOf(events),histograms.total(),java.util.Collections.unmodifiableMap(cumulative),(int)Math.min(Integer.MAX_VALUE,Math.round(seconds*1000)));

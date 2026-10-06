@@ -201,3 +201,15 @@
 | 실시간 이벤트: 시뮬레이터가 마지막 80건(`eventHistory`, 오래된 것 → 최신)을 1초 창과 따로 보관해 tick에 실음. 화면은 실행 id가 있으면(끝난 뒤에도) 이 목록으로 채우고, 새 실행 시작(id 변경)에만 비움 | 화면 목록이 브라우저 메모리에만 있고 1초 창(recentEvents)으로만 채워져, 새로 열거나 재연결하면 끝난 실행의 목록이 비어 있었음 | `RunStats.history`, `Live.eventHistory`, `app.js collectEvents` | - |
 | 같은 tick 안 여러 사건이 오래된 것부터 위에 쌓이던 순서를 바로잡음(최신이 맨 위). 중복 제거 키를 원래 줄로 통일 | 발견해서 같이 고침 | `app.js collectEvents` | - |
 | 테스트: 1·2번 고치기 전(finalizing 자리만 둔 상태) 3개 실패 확인. 변형(settled 무시·finalSample 제거) → 3개 실패, 이벤트 보관 제거 → 실패 확인 후 되돌림 | AGENTS.md | `FinalizeTest`, `EventHistoryTest` | - |
+
+## 완료 상태 카드 · 그래프 구간 최대 · 엔드포인트 이름 · reservation 집계 (2026-10-06, 사용자 지시)
+
+| 결정한 것 | 어떻게 정했나 | 영향받는 코드 | 이유 |
+|---|---|---|---|
+| 완료·중지·실패 상태에서도 실시간 화면 서버 지표 카드 4개를 "–"로 비우고 색은 기본, 아래 줄 "실행 끝 · 결과는 실행 결과 탭에서" | 지시. 정리 중과 같은 처리 | `app.js render` | 마지막 1초(판매 종료 409 등)가 빨갛게 남지 않게 |
+| 결과 그래프: 9.4 "N초 평균"은 그대로 두고, step>1이면 시계열 응답 signals에 `rpsMax`·`errPctMax`·`poolPctMax`(구간 최대) 추가. 그래프는 평균선 + 연한 점선(구간 최대) + 최고점 표시를 구간 최대로. p95·p99는 원래 구간 최대(9.4) | 평균을 최대로 바꾸면 9.4와 다름. 원인: run-706852b5 step=4 평균에 1초 85%가 묻혀 18%로 보임 | `RunStore.series`, `results.js` | 명세 유지 + 최대 보존 |
+| 요약 signals에 `poolPendingAtMax`(최대 풀 사용률을 찍은 초의 풀 대기) 추가, 표의 "최대 풀 사용률" 옆에 "· 대기 n". 이전 기록에는 없어 표시 안 함 | 지시 | `RunMeasurements`, `results.js renderTable` | 순간값인지 포화인지 |
+| 예약 서버 지표 키는 8.2대로 `depositPay`·`cancel` 하나씩. 예전처럼 `deposit.pay`·`reservation.cancel`로 기록하고 같은 값을 별칭으로 복사하던 것 제거. 시뮬레이터(클라이언트) 쪽 이름 `deposit.pay`·`reservation.cancel`은 그대로(요청 이름이고 명세에 따로 없음) | 지시 "이름 하나로" + 8.2 | `RequestMetricsFilter`, `MetricsCollector` | - |
+| 예전 기록 읽기 유지: 에러율 계산은 두 이름이 다 있으면 depositPay·cancel만 셈, 한쪽만 있으면 그것을 셈. 결과 화면 상세는 depositPay가 없으면 deposit.pay를 읽음 | 기록 형식 추가만 | `RunMeasurements.sample`, `results.js openChartDetail` | - |
+| 테스트: 2·4번 고치기 전 4개 실패 확인. 변형(구간 최대 제거·풀 대기 제거·예전 중복 규칙·서버 예전 이름) → 실패 확인 후 되돌림. 1번은 화면 로직이라 ui-check로 같은 가짜 tick의 전·후(완료·중지에서 숫자 21/100 빨강 → "–")를 확인 | AGENTS.md (화면 JS 테스트 틀 없음) | `ChartPeaksAndNamesTest`, `EndpointNamesTest` | - |
+| **보고: reservation 집계 불일치는 집계 오류가 아님.** 서버의 `reservation` 246건은 시뮬레이터가 입금 대기 중인 사용자 대신 예약 상태를 1초마다 확인한 내부 조회(`RunHttp.internalReservation`, `VirtualUser.deposit` 202행): 미입금으로 입금 기한(60초)을 기다린 사용자 4명 × 약 60회 ≈ 246. 시뮬레이터는 설계상 내부 조회를 사용자 요청에서 빼고(`requests.byEndpoint`=0), 서버는 받은 요청을 모두 셈 | 원인 먼저 보고 (수정 안 함) | - | 고칠지는 사용자 결정 |

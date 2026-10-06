@@ -24,7 +24,9 @@ public final class RunMeasurements {
         var endpoints=object(server.get("endpoints"));var p=object(server.get("pool"));var db=object(server.get("db"));var http=object(server.get("http"));
         double responses=0,errors=0;
         for(var endpointEntry:endpoints.entrySet()) {
-            if(Set.of("depositPay","cancel").contains(endpointEntry.getKey())) continue;
+            // 8.2 키는 depositPay·cancel. 예전 서버는 같은 값을 deposit.pay·reservation.cancel로도 보냈으므로 둘 다 있으면 한 번만 센다
+            String name=endpointEntry.getKey();
+            if(name.equals("deposit.pay") && endpoints.containsKey("depositPay") || name.equals("reservation.cancel") && endpoints.containsKey("cancel")) continue;
             var endpoint=endpointEntry.getValue();
             // 429(좌석 조회 새로고침 제한)는 에러율의 분자·분모 모두에서 뺀다 (docs/DECISION_CLAUDE.md). 예약 서버가 429를 내는 경우는 이것뿐
             var counts=object(object(endpoint).get("status"));for(var entry:counts.entrySet()) { if(entry.getKey().equals("429")) continue;double n=number(entry.getValue());responses+=n;if(!entry.getKey().equals("2xx")) errors+=n; }
@@ -61,7 +63,11 @@ public final class RunMeasurements {
         if(next.equals("RUSH")) { if(signals.get("p95")!=null) { rushP95+=number(signals.get("p95"));rushSamples++; }rushErr+=number(signals.get("errPct"));rushErrSamples++; }
         for(String name:List.of("rps","p95","p99","poolPct","lockWaits")) {
             Object value=signals.get(name);String key=name+"Max";
-            if(value!=null && (!peaks.containsKey(key) || number(value)>number(peaks.get(key)))) peaks.put(key,value);
+            if(value!=null && (!peaks.containsKey(key) || number(value)>number(peaks.get(key)))) {
+                peaks.put(key,value);
+                // 최대 풀 사용률이 순간값인지 실제 포화인지 보도록 그 초의 풀 대기 수를 같이 남긴다 (추가 필드)
+                if(name.equals("poolPct")) peaks.put("poolPendingAtMax",signals.get("poolPending"));
+            }
         }
         var compactEndpoints=new TreeMap<String,Object>();endpoints.forEach((key,value) -> {
             var e=object(value);var l=object(e.get("latency"));var v=new LinkedHashMap<String,Object>();v.put("rps",e.get("rps"));v.put("p50",l.get("p50"));v.put("p95",l.get("p95"));v.put("p99",l.get("p99"));v.put("err",e.get("errorClasses"));compactEndpoints.put(key,v);
