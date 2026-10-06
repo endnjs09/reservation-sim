@@ -92,9 +92,11 @@ public class QueueState {
     public synchronized boolean saleState(boolean sold,String epoch) {
         if(epoch!=null && !epoch.equals(config.runEpoch())) return true;
         soldOut=sold;Instant now=clock.instant();closeSaleIfEnded(now);
+        // 매진으로 닫을 때는 WAITING만 닫는다. 입장한 사람은 입장키가 만료까지 유효하므로 자리도 그대로 두고,
+        // COMPLETED·LEFT·만료·busy 상한으로만 반납한다. 자리를 먼저 반납하면 매진이 풀릴 때 새로 입장시켜
+        // 유효한 키 보유자가 maxActive를 넘는다 (run-203fb855 t=534: 357명, docs/DECISION_CLAUDE.md). 판매 종료는 전원 닫음 그대로.
         if(config.closeQueueOnSoldOut() && soldOut && now.isBefore(config.saleEndAt())) {
             for(Token token:new ArrayList<>(waiting.values())) close(token,"SOLD_OUT",now);
-            for(Slot slot:new ArrayList<>(slots.values())) if(!slot.busy) close(slot.token,"SOLD_OUT",now);
         }
         return false;
     }

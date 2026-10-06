@@ -214,3 +214,11 @@
 | 테스트: 2·4번 고치기 전 4개 실패 확인. 변형(구간 최대 제거·풀 대기 제거·예전 중복 규칙·서버 예전 이름) → 실패 확인 후 되돌림. 1번은 화면 로직이라 ui-check로 같은 가짜 tick의 전·후(완료·중지에서 숫자 21/100 빨강 → "–")를 확인 | AGENTS.md (화면 JS 테스트 틀 없음) | `ChartPeaksAndNamesTest`, `EndpointNamesTest` | - |
 | **보고: reservation 집계 불일치는 집계 오류가 아님.** 서버의 `reservation` 246건은 시뮬레이터가 입금 대기 중인 사용자 대신 예약 상태를 1초마다 확인한 내부 조회(`RunHttp.internalReservation`, `VirtualUser.deposit` 202행): 미입금으로 입금 기한(60초)을 기다린 사용자 4명 × 약 60회 ≈ 246. 시뮬레이터는 설계상 내부 조회를 사용자 요청에서 빼고(`requests.byEndpoint`=0), 서버는 받은 요청을 모두 셈 | 원인 먼저 보고 (수정 안 함) | - | 고칠지는 사용자 결정 |
 | 입금 대기 중 예약 상태 확인(GET /reservations/{id})을 사용자 요청으로 셈: requests.byEndpoint.reservation·clientLatencyMs.reservation에 들어가 서버 reservation 집계와 같은 기준. 내부 전용 `RunHttp.internalReservation` 제거. 서버는 그대로, 예전 기록은 0 그대로. 테스트 `noPaySendsNoBank…`의 "reservation 0" 기대를 새 지시대로 바꾸고(고치기 전 실패 확인) 가짜 서버의 사용자 요청 수에도 이 조회를 포함 | 사용자 결정 (2026-10-06, 첫 번째 방법) | `VirtualUser.deposit`, `RunHttp`, `V5EngineTest` | 측정 영향 초당 약 0.2건이라 기준선 유지 |
+
+## 입장 정원 초과 (2026-10-06, 버그 수정 · 사용자 지시)
+
+| 결정한 것 | 어떻게 정했나 | 영향받는 코드 | 이유 |
+|---|---|---|---|
+| **확인 근거** run-203fb855(1×, closeQueueOnSoldOut 켬): 대기열 snapshot에서 CLOSED(SOLD_OUT) 1,123개 중 399개가 이미 입장했던 토큰. 입장키는 서명 토큰이라 대기열이 CLOSED로 바꿔도 예약 서버에서 만료까지 유효. 토큰별 입장 시각·만료(420초)·종료 상태로 계산한 **유효 키 보유자 최대 357명(t=534), 그 시각 대기열 자리 0** (maxActive 200). 시계열 t=540: 대기열 active 0인데 시뮬레이터 입장 309명, 예약 서버 209 rps. run-706852b5도 t=444 대기열 active 0, 시뮬레이터 입장 199 | 사용자 추정 확인 | `QueueState.saleState` | - |
+| 매진으로 닫을 때 WAITING만 CLOSED(SOLD_OUT). ADMITTED는 바쁘든 아니든 그대로, 자리는 COMPLETED·LEFT·만료·busy 상한으로만 반납. 판매 종료 때 전원 CLOSED는 그대로 | 지시 | `QueueState.saleState` | 유효 키 보유자 ≤ maxActive |
+| 기존 테스트 `soldOutOptionClosesWaitingAndIdle…`(쉬는 입장자도 닫음)를 새 규칙으로 바꿈. 새 테스트: 매진·풀림 반복에도 유효 키 보유자 ≤ maxActive, 다시 열릴 때 실제 빈 자리만큼만 입장. 고치기 전 3개 실패(주기 1에 보유자 6 > 3) 확인 | AGENTS.md | `QueueStateTest` | - |

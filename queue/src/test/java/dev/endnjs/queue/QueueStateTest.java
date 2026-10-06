@@ -69,12 +69,45 @@ class QueueStateTest {
         assertThat(queue.slotEvent(kid,QueueState.Event.HOLD_ACTIVE,at,null)).isTrue();
         assertThat(queue.slotEvent(kid,QueueState.Event.HOLD_ACTIVE,at.plusSeconds(1),"old-run")).isTrue();assertThat(queue.stats().get("busy")).isEqualTo(0L);
     }
-    @Test void soldOutOptionClosesWaitingAndIdleButProtectsBusyAndAllowsReentryAfterReopen() {
+    /** 매진으로 닫을 때는 WAITING만 CLOSED(SOLD_OUT). 입장한 사람(바쁘든 아니든)은 그대로: 입장키가 계속 유효하므로 자리도 유지 (docs/DECISION_CLAUDE.md). */
+    @Test void soldOutOptionClosesOnlyWaitingAndKeepsAdmittedAndAllowsReentryAfterReopen() {
         queue.reset(new QueueConfig(2,20,420,510,1,NOW.plusSeconds(1200),true,"run",null));
         UUID busy=enter("busy"),idle=enter("idle"),waiting=enter("waiting");clock.advance(1);queue.tick();queue.slotEvent(kid(busy),QueueState.Event.HOLD_ACTIVE,clock.instant(),"run");
-        queue.saleState(true,"run");assertThat(queue.status(busy).get("status")).isEqualTo(QueueState.Status.ADMITTED);
-        for(UUID token:List.of(idle,waiting)) assertThat(queue.status(token)).containsEntry("status",QueueState.Status.CLOSED).containsEntry("reason","SOLD_OUT");
+        queue.saleState(true,"run");
+        for(UUID token:List.of(busy,idle)) assertThat(queue.status(token).get("status")).isEqualTo(QueueState.Status.ADMITTED);
+        assertThat(queue.status(waiting)).containsEntry("status",QueueState.Status.CLOSED).containsEntry("reason","SOLD_OUT");
         assertThat(queue.enter("new")).containsEntry("status",QueueState.Status.CLOSED);queue.saleState(false,"run");assertThat(queue.enter("new")).containsEntry("status",QueueState.Status.WAITING);
+    }
+    /** 매진 → 닫힘 → 매진 풀림 → 다시 열림을 반복해도 유효한 입장키를 가진 사람은 maxActive 이하. */
+    @Test void validKeyHoldersNeverExceedMaxActiveAcrossSoldOutCycles() {
+        queue.reset(new QueueConfig(3,20,420,510,1,NOW.plusSeconds(1200),true,"run",null));
+        var expires=new HashMap<UUID,Instant>();int user=0;
+        for(int cycle=0;cycle<6;cycle++) {
+            for(int i=0;i<5;i++) enter("u"+(user++));
+            clock.advance(1);queue.tick();
+            for(var t:(List<Map<String,Object>>)queue.snapshot().get("tokens")) {
+                var id=(UUID)t.get("tokenId");
+                if(t.get("status")==QueueState.Status.ADMITTED && !expires.containsKey(id)) expires.put(id,(Instant)queue.status(id).get("admissionExpiresAt"));
+            }
+            long holders=expires.entrySet().stream().filter(e -> clock.instant().isBefore(e.getValue())).filter(e -> {
+                var status=queue.status(e.getKey()).get("status");return status==QueueState.Status.ADMITTED || status==QueueState.Status.CLOSED; // CLOSED여도 입장키는 만료까지 유효
+            }).count();
+            assertThat(holders).as("cycle "+cycle).isLessThanOrEqualTo(3);
+            queue.saleState(true,"run");queue.saleState(false,"run"); // 즉시 반환 좌석으로 매진이 풀림
+        }
+    }
+    /** 입장한 사람의 자리는 키 만료까지 유지되고, 다시 열릴 때 실제 빈 자리만큼만 입장. */
+    @Test void reopeningAdmitsOnlyIntoActuallyFreeSlots() {
+        queue.reset(new QueueConfig(2,20,420,510,1,NOW.plusSeconds(1200),true,"run",null));
+        UUID a=enter("a"),b=enter("b");clock.advance(1);queue.tick();
+        queue.saleState(true,"run");queue.saleState(false,"run");
+        UUID late=enter("late");clock.advance(1);queue.tick();
+        assertThat(queue.status(late).get("status")).isEqualTo(QueueState.Status.WAITING); // 빈 자리 없음
+        assertThat(queue.stats()).containsEntry("ADMITTED",2L);
+        queue.leave(a);clock.advance(1);queue.tick();
+        assertThat(queue.status(late).get("status")).isEqualTo(QueueState.Status.ADMITTED); // 실제로 빈 한 자리만큼
+        clock.advance(420);queue.tick();
+        assertThat(queue.status(b).get("status")).isEqualTo(QueueState.Status.EXPIRED); // b의 자리는 키 만료까지 유지됐다
     }
     @Test void soldOutDefaultDoesNotCloseEnterOrReentryAndWaitingResponsesHideInventory() {
         UUID token=enter("owner");queue.saleState(true,null);assertThat(queue.enter("owner")).containsEntry("token",token).containsEntry("status",QueueState.Status.WAITING);
