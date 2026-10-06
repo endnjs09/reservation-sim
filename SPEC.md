@@ -4,6 +4,7 @@
 > 예전 파일은 `docs/history/`에 참고용으로만 둔다. 예전 파일과 이 파일이 다르면 **이 파일이 맞다.**
 >
 > 변경 기록
+> - 2026-10-06 통합본 1.4.0: 매진 시 대기자만 닫고 입장자 자리는 유지 (7.6, 정원 초과 버그 수정). 재방문 대기 중 재시도 (11.5.1, 10.3, 11.8). 작은 표본 창 제외 (8.1, 11.8, 9.2, 14.1). 완료·중지 상태 카드 비우기 (14.1). 그래프 묶음 최대값, 최대 풀 사용률 옆 풀 대기 (9.4, 11.8, 14.2). 예약 조회를 사용자 요청으로 집계 (11.5, 11.8). 새 bench 기준선 (10.4).
 > - 2026-10-05 통합본 1.3.0: 매진 시 대기열 닫기 기본 켬 (7.6, 10.3). 좌석 조회 새로고침 제한 (6.4.1, 기본 켬)·좌석 조회 캐시 (6.4.2, 선택). 429는 에러율에서 제외 (8.3, 8.1). 종료 정지 대기를 남은 선점·결제가 없으면 바로 끝내기, "정리 중" 표시 (8.5, 14.1). 엔진 종료 때 SALE_ENDED 기록 (8.5). 누적 카운터에서 Hardcore 제거, 실시간 이벤트 80건 보관 (14.1). 새 bench 기준선 (10.4).
 > - 2026-10-05 통합본 1.2.0: 대기 이탈 규칙 (11.4.1, 10.3, 11.8), 실행 중지 시 예매 후 취소 대기 = confirmed (11.8), 사용자 노드 6칸 (14.1), 창 크기 맞춤 레이아웃 (13장), 측정 중 다른 컨테이너 경고 (10.4).
 > - 2026-10-04 통합본 1.1.3: 서버별 anchorAt을 보내기 직전 값으로 (3장, 10.2). 기준선은 워밍업 1회 뒤 (10.4). 목업 위치 `design_ex/` (2.1, 13장).
@@ -571,8 +572,10 @@ cors-origins: [ "http://localhost:8090" ]
 
 ### 7.6 판매 상태 처리
 - **판매 종료** (`saleEndAt`): WAITING/ADMITTED 전부 CLOSED(`SALE_ENDED`). 이후 enter는 200 + CLOSED(`SALE_ENDED`) 토큰.
-- **`closeQueueOnSoldOut`** (기본 true, 1.3.0부터): true이고 soldOut이면 WAITING 전부와 busy 아닌 ADMITTED를 CLOSED(`SOLD_OUT`), 이후 enter도 CLOSED(`SOLD_OUT`). soldOut=false가 오면 다시 접수. false면 아무도 내보내지 않는다.
-- 이미 발급된 입장키는 회수하지 않는다. CLOSED된 ADMITTED 사용자도 키 만료(`admissionTtlSec`)까지 `/seats`를 계속 쓸 수 있고, 키가 끝나면 재진입하다 CLOSED로 나간다 (실제 예매 사이트처럼 예매창 안의 사용자를 강제로 쫓아내지 않음). 또 soldOut은 HELD 0이어야 하므로 결제 포기 선점이 남아 있으면 TTL까지 닫히지 않는다.
+- **`closeQueueOnSoldOut`** (기본 true, 1.3.0부터): true이고 soldOut이면 **WAITING만** CLOSED(`SOLD_OUT`), 이후 enter도 CLOSED(`SOLD_OUT`). soldOut=false가 오면 다시 접수. false면 아무도 내보내지 않는다.
+- **ADMITTED는 매진으로 닫지 않는다** (1.4.0). 입장한 사람의 자리는 7.2의 규칙(COMPLETED, LEFT, 만료, busy 상한)으로만 반납한다. 그래서 닫혔다 다시 열려도 실제 빈 자리만큼만 입장하고, **유효 입장키 보유자 수 ≤ maxActive**가 항상 지켜진다.
+  - 1.3.0까지는 busy 아닌 ADMITTED를 CLOSED로 바꾸며 자리를 반납했는데, 입장키는 서명 토큰이라 예약 서버에서 만료까지 계속 쓰였다. 매진이 풀리면 반납된 자리로 새 사람이 들어와 유효 키 보유자가 정원을 넘었다 (run-203fb855 최대 357명, 기준선 run-ebf26b93 최대 407명).
+- 입장키는 회수하지 않는다. 입장한 사용자는 키 만료(`admissionTtlSec`)까지 `/seats`를 계속 쓸 수 있고, 키가 끝나면 재진입하다 매진이면 CLOSED로 나간다 (실제 예매 사이트처럼 예매창 안의 사용자를 강제로 쫓아내지 않음). 또 soldOut은 HELD 0이어야 하므로 결제 포기 선점이 남아 있으면 TTL까지 닫히지 않는다.
 
 ### 7.7 관리 API
 - `POST /admin/reset` `{ "anchorAt", "maxActive", "admitPerSec", "admissionTtlSec", "busyMaxExtraSec", "timeScale", "saleEndAt", "closeQueueOnSoldOut", "runEpoch" }` (`anchorAt`으로 3장의 Clock 기준을 잡는다)
@@ -602,12 +605,13 @@ cors-origins: [ "http://localhost:8090" ]
 | 에러율 | 1초 창 non-2xx ÷ 전체 × 100. 429 RATE_LIMITED는 분자·분모 모두 제외 (8.3) | 8% / 25% |
 | 포화도 | DB 풀 `active ÷ max × 100`. 보조: 풀 대기, 락 대기, 스레드 사용률 | 70% / 90% |
 - 임계치는 UI 고급 설정에서 바꾸고 실행 기록에 저장한다.
+- **작은 표본 창** (1.4.0): 1초 창의 예약 서버 응답 수(429 제외)가 `minSamplesPerWindow`(기본 20) 미만이면 그 창은 `signals.lowSample = true`. 그 창의 p95·에러율 `levels`는 "표본 적음"(회색)이고, `sloBreachSec`, `p95Max`, `p99Max`, 에러율 경고 판정에서 뺀다. 누적 `latencyMs`와 폭주 구간 평균(p95Rush, errPctRush)은 그대로. 이유: 초당 3건 중 카드 승인 1건(결제사 지연 포함 300~500ms)이 p95를 389.9ms로 만들어 SLO 초과로 기록되던 문제 (run-203fb855). 시계열에 `signals.lowSample`, `signals.samples`. 없는 예전 기록은 `minSamplesPerWindow = 0`(제외 안 함)으로 읽는다.
 - 4신호는 시뮬레이터가 **한 곳에서 계산**(`signals`, `levels`)해 실시간 화면과 저장 시계열에 같은 값을 쓴다.
 - **실패율** `failPct` = 클라이언트 측 (예약 서버 5xx + timeout + transport) ÷ 시뮬레이터가 예약 서버로 보낸 요청(429 받은 요청 제외) × 100. 에러율과 따로 본다 (409는 경쟁의 결과지 고장이 아니다).
 
 ### 8.2 응답 시간 측정
 - **서버 측** (`RequestMetricsFilter`): 진입 ~ 응답 커밋. 엔드포인트별 HdrHistogram(1µs~60s, 유효숫자 3), 1초 창은 `Recorder`로 교체.
-  - 예약 서버 키: `seats`, `holds`, `release`, `checkout`, `confirm`, `reservation`, `deposit`, `depositPay`, `cancel`.
+  - 예약 서버 키: `seats`, `holds`, `release`, `checkout`, `confirm`, `reservation`, `deposit`, `depositPay`, `cancel`. 다른 이름으로 같은 값을 중복 기록하지 않는다 (예전 기록의 `deposit.pay`·`reservation.cancel`은 읽기만 지원).
   - 대기열 서버 키: `queue.enter`, `queue.status`, `queue.leave`, `internal.events`.
   - 예약 서버 `PgClient`: 승인·조회·취소 호출별.
 - **누적**: reset 이후 엔드포인트별 누적 히스토그램도 유지 (`cumulative`). 요약의 백분위는 이 값을 쓴다 (초별 백분위는 합칠 수 없다).
@@ -750,6 +754,7 @@ invariants.json     외부 검사기가 씀 (없을 수 있음)
 | OLD_SCHEMA | schemaVersion < 5 (comparable = false, 요약만) |
 | ENV_DIFFERS | cpuCores 또는 os 다름, 또는 `environment.bench`(10.4)가 다름 |
 | ENV_DEGRADED | 둘 중 하나라도 `SWAP_USED` 사건이 있음 (측정 중 메모리 부족) |
+| THRESHOLDS_DIFFER | `minSamplesPerWindow`가 다름 (p95Max·p99Max·sloBreachSec의 계산 기준이 달라 직접 비교 불가). 다른 임계치는 판정값이라 경고 대상 아님 |
 | CLOCK_MODEL_DIFFERS | 한쪽 run.json에만 `clockOffsetsMs`가 있음 (anchor 도입 전 실행은 실제 판매 시간이 6~11% 짧다). 문구: "누적 지표는 판매 시간이 달라 참고만, 폭주 구간 지표(p95Rush, errPctRush, poolSatSec)로 비교하세요" |
 
 ### 9.3 비교 지표 (순서 고정)
@@ -760,6 +765,7 @@ p95Max(낮음), p99Max(낮음), p95Rush(낮음), sloBreachSec(낮음), errPctRus
 ### 9.4 시계열 정렬
 - 가로축 `t`로 겹친다. 단계 음영은 A 기준, B의 단계 경계는 가로축 아래 작은 눈금.
 - 다운샘플 `step=N`: N초 평균, 백분위는 N초 중 최대. 폭 600px 기준 N = ceil(길이 ÷ 300).
+- 평균으로 그리는 선(처리량·에러율·풀 사용률)은 **묶음 최대값을 연한 점선으로 함께** 그린다. 최고점 표시는 이 최대값 기준 (1초짜리 순간값이 평균에 묻혀 사라지지 않게. run-706852b5에서 요약 85%가 그래프에 18%로 보였던 문제).
 
 ---
 
@@ -789,6 +795,8 @@ p95Max(낮음), p99Max(낮음), p95Rush(낮음), sloBreachSec(낮음), errPctRus
 | 사용자 | casualLeaveSec | 0~60 | sim |
 | 사용자 | persistentHalfLifeSec | 180 | sim |
 | 사용자 | revisitProb (c/p/h) | 0.1/0.5/0.9 | sim |
+| 사용자 | revisitRetryEnabled | true (예전 기록은 false) | sim |
+| 사용자 | revisitRetryHardcoreMultiplier / revisitRetryPersistentSec | 2 (새로고침 간격 ×) / 10~20 | sim |
 | 사용자 | queueAbandonEnabled | true | sim |
 | 사용자 | queueHalfLifeSec (c/p) | 180 / 600 | sim |
 | 사용자 | queueStallWindowSec / queueStallMinProgress | 60 / 0.05 | sim |
@@ -814,7 +822,7 @@ p95Max(낮음), p99Max(낮음), p95Rush(낮음), sloBreachSec(낮음), errPctRus
 | 서버 | seatsRateLimitEnabled / seatsMinIntervalSec | true / 1.0 | server |
 | 서버 | seatsCacheSec (0 끔 / 1) | 0 | server |
 | 실행 | timeScale | 4 | 전부 |
-| 계측 | thresholds | 8.1 기본값 | 기록·UI |
+| 계측 | thresholds | 8.1 기본값, `minSamplesPerWindow` 20 | 기록·UI |
 | 실행 | timeLimitSec | 현재 구현 값 유지 (BASE 기본 600은 판매 시간 1200보다 짧다. 구현 값이 판매 시간 + 정지 대기보다 짧으면 보고) | sim |
 | 실행 | queueMode | EXTERNAL (W3 완료 전에는 EMBEDDED 가능) | sim |
 | 접속 | targets (server, queue, pg), requestTimeoutMs | :8080, :8082, :8081, 10000 | sim |
@@ -850,7 +858,9 @@ p95Max(낮음), p99Max(낮음), p95Rush(낮음), sloBreachSec(낮음), errPctRus
 - 기준선은 bench-up 직후 첫 실행이 아니라 **워밍업 실행 1회 뒤**에 뜬다 (띄운 직후에는 JVM 초기화로 시계 차이·지연이 커진다. 실측 mock-pg cold −90ms).
 - 비교용 기준선은 이 환경에서 뜬 실행만 쓴다. bench 도입 전 실행(W2 EMBEDDED 기준선 포함)은 참고용 비교만 한다.
 - bench-up은 측정과 무관한 컨테이너·프로세스(다른 프로젝트의 DB 등)가 떠 있으면 이름을 출력하고 경고한다. 기준선을 뜰 때는 끄고 뜬다. 떠 있던 목록은 run.json `environment.bench.otherContainers`에 남긴다.
-- **현재 기준선 (1.3.0 기본값)**: conditional `run-ebf26b93`, pessimistic `run-3b71ffc8`. 1.2.0 기본값 기준선 `run-535adb85`·`run-f7d2b182`는 이름 앞에 "구 기본값 ·"을 붙여 고정 유지 (대기열 닫기·새로고침 제한이 달라 직접 비교하지 않음).
+- **현재 기준선 (1.4.0)**: conditional `run-e28355d5`, pessimistic `run-3b6b4a6d`. 캐시 비교 `run-4239685f` (conditional + seatsCacheSec 1).
+- 1.3.0 기준선 `run-ebf26b93`·`run-3b71ffc8`은 이름 앞에 "1.3.0 기본값 ·"을 붙여 고정 유지. **정원 초과 버그(7.6)가 있던 실행이라 매진 이후 지표는 쓰지 않는다** (폭주 구간 지표는 매진 전이라 참고 가능).
+- 1.2.0 기본값 기준선 `run-535adb85`·`run-f7d2b182`는 이름 앞에 "구 기본값 ·"을 붙여 고정 유지 (대기열 닫기·새로고침 제한이 달라 직접 비교하지 않음).
 
 ---
 
@@ -911,6 +921,21 @@ p95Max(낮음), p99Max(낮음), p95Rush(낮음), sloBreachSec(낮음), errPctRus
 ### 11.5 재방문
 - 구매 못 하고 떠난 사용자는 취소표 재방문 대기 상태.
 - 시뮬레이터가 1초마다 예약 서버 `/admin/stats`의 `releaseBatches.nextReleaseAt`을 읽어(내부 판단용, 사용자 요청으로 집계 안 함), 오픈 1회당 사용자별 1번 `revisitProb`로 그 시각 ± U(0, 5)초에 다시 도착.
+- 취소표 오픈 때 이미 줄에 있거나 입장한 사람은 `revisitProb`를 다시 굴리지 않는다.
+- 사용자의 예약 상태 조회(`GET /reservations/{id}`, 202 폴링·입금 대기 확인)는 **사용자 요청으로 집계**한다 (`requests.byEndpoint.reservation`, `clientLatencyMs.reservation`). 서버 집계와 같은 기준. 내부 판단용 `/admin/*` 읽기만 집계에서 뺀다.
+
+#### 11.5.1 재방문 대기 중 재시도 (1.4.0, 기본 켬)
+즉시 반환(예매 취소·결제 실패·선점 만료)으로 매진이 풀리면 대기열이 다시 열리지만, 취소표 오픈만 기다리면 아무도 오지 않는다. 실제처럼 끈질긴 사용자는 계속 진입을 시도한다.
+| 성향 | 재시도 |
+|---|---|
+| hardcore | 간격 = 페르소나 새로고침 간격 × `revisitRetryHardcoreMultiplier`(2) → fast 2초, normal 4초, slow 6초. ±20% 편차. 판매 종료까지 |
+| persistent | 간격 U(10, 20)초. 시도마다 `1 − 0.5^(Δt ÷ persistentHalfLifeSec)` 확률로 재시도 중단 (이후 취소표 오픈 때만 revisitProb) |
+| casual | 재시도 없음 |
+- 진입 응답이 CLOSED(SOLD_OUT)면 다음 간격까지 대기 (예약 서버 요청 0건). WAITING이면 11.2 흐름 그대로 (대기 이탈·입장 후 이탈 포함). 재시도로 줄에 들어가면 대기 이탈의 시간 기준을 새로 잡는다.
+- 아직 판단하지 않은 취소표 오픈이 있으면 그 판단을 먼저 한다.
+- 판단용 난수는 별도 스트림.
+- 집계: `events.revisitRetries`(시도 수), `events.revisitRetryAdmitted`(재시도로 입장한 수). 시계열 `revisit.retriesRps`, `queue.enterRps`. 실시간 이벤트 목록에는 남기지 않는다 (초당 수십 건).
+- 측정 (bench 1×, run-e28355d5): 재시도 21,586회, 그중 입장 164명. 매진 후 대기열 진입 요청 약 20 rps.
 
 ### 11.6 좌석 선택 (n매)
 1. AVAILABLE 중 가장 앞줄. 80%는 그 줄부터, 20%는 다음 줄부터.
@@ -930,9 +955,9 @@ p95Max(낮음), p99Max(낮음), p95Rush(낮음), sloBreachSec(낮음), errPctRus
   "avgLatencyMs": { ... },
   "outcomes": { "confirmed", "soldOut", "gaveUp", "abandoned", "incomplete", "error", "depositPaid", "depositExpired", "canceledAfterPurchase", "revisited", "queueAbandoned" },
   "outcomesByPersona": { ... }, "outcomesByChurn": { "casual": { ... }, "persistent": { ... }, "hardcore": { ... } },
-  "events": { "conflicts", "refreshes", "requeues", "authFailed", "declined", "holdExpired", "immediateReturnsSeen", "reopenSeen", "saleEndFallback", "queueAbandons", "queueAbandonsStalled", "cancelPendingAtStop", "rateLimited" },
+  "events": { "conflicts", "refreshes", "requeues", "authFailed", "declined", "holdExpired", "immediateReturnsSeen", "reopenSeen", "saleEndFallback", "queueAbandons", "queueAbandonsStalled", "cancelPendingAtStop", "rateLimited", "revisitRetries", "revisitRetryAdmitted" },
   "seatsSold": 100, "seatsByGrade": { ... },
-  "signals": { "rpsMax", "p95Max", "p99Max", "p95Rush", "errPctRush", "failPct", "poolPctMax", "poolSatSec", "lockWaitsMax", "sloBreachSec", "soldOutAtSec" },
+  "signals": { "rpsMax", "p95Max", "p99Max", "p95Rush", "errPctRush", "failPct", "poolPctMax", "poolPendingAtMax", "poolSatSec", "lockWaitsMax", "sloBreachSec", "soldOutAtSec" },
   "latencyMs": { "holds": { "p50", "p95", "p99" } }, "clientLatencyMs": { ... },
   "errorClasses": { "conflict", "notPayable", "key", "declined", "client", "rateLimited", "shed", "server", "timeout", "transport" } }
 ```
@@ -940,7 +965,9 @@ p95Max(낮음), p99Max(낮음), p95Rush(낮음), sloBreachSec(낮음), errPctRus
 |---|---|
 | p95Rush, errPctRush | phase = RUSH인 초들의 평균 |
 | poolSatSec | poolPct ≥ poolBadPct인 초 수 |
-| sloBreachSec | p95 ≥ p95SloMs인 초 수 |
+| sloBreachSec | p95 ≥ p95SloMs인 초 수 (표본 적음 창 제외, 8.1) |
+| p95Max, p99Max | 초별 값의 최대 (표본 적음 창 제외) |
+| poolPctMax / poolPendingAtMax | 초별 풀 사용률 최대 / 그 초의 풀 대기 수. 사용률은 1초 1회 순간값이라 대기 0이면 실제 포화가 아니다 (예: run-706852b5 t=533, 85% · 대기 0) |
 | soldOutAtSec | AVAILABLE이 처음 0이 된 t |
 | latencyMs | 서버 `cumulative` 종료 시점 값 |
 | outcomes.queueAbandoned | 대기 이탈을 한 번이라도 한 **사람 수** (outcomes는 모두 사람 단위) |
@@ -1038,7 +1065,8 @@ p95Max(낮음), p99Max(낮음), p95Rush(낮음), sloBreachSec(낮음), errPctRus
 | 에러율 | signals.errPct % (429 제외) | "409 n/s · 403 n/s · 5xx n · 429 n/s" | 에러 상세 |
 | 포화도 (DB 풀) | signals.poolPct % | "대기 n · 락 대기 n" | DB 상세 |
 - 오른쪽 최근 60초 막대. 숫자·막대·테두리 색은 `levels`.
-- 정지 대기 중(8.5)에는 상태 pill이 "정리 중", 카드 4개의 큰 숫자는 "–".
+- 정지 대기 중(8.5)에는 상태 pill이 "정리 중", 카드 4개의 큰 숫자는 "–". 완료·중지·실패 상태에서도 "–"와 기본 색, 보조 줄은 "실행 끝 · 결과는 실행 결과 탭에서" (마지막 1초 값이 판매 종료 409로 에러율 100%처럼 보이던 문제).
+- 표본 적음 창(8.1)이면 p95·에러율 카드는 회색 + "표본 적음 (n건)".
 
 **구조도** (노드·선 배치는 목업 좌표 기준, 크기는 13장 규칙으로 맞춤)
 | 노드 | 큰 숫자 | 보조 | 테두리 |
@@ -1100,12 +1128,12 @@ p95Max(낮음), p99Max(낮음), p95Rush(낮음), sloBreachSec(낮음), errPctRus
 ### 14.2 실행 결과 화면
 **상단**: 제목, 보기 전환 **단일 실행 / 전략 비교**, 실행 선택 (최근 3개 칩 + "모든 실행 ›" 서랍: 이름·전략·시각·상태·불변식 통과 수, 검색). 단일 1개, 비교 2개 (A = 먼저, B = 나중, 새로 고르면 오래된 쪽이 빠짐). 9.2 경고는 상단 노란 줄.
 
-**요약 카드 6개**: 최대 p95 응답 / 폭주 구간 평균 p95 / 최대 처리량 / 풀 포화 시간 / 매진 시각(잔여 첫 0) / 불변식 (없으면 "검사 안 함"). 비교 모드는 A·B 값을 태그(A/B, 실행 색)와 함께 나란히, 나은 쪽 ok 색.
+**요약 카드 6개**: 최대 p95 응답 / 폭주 구간 평균 p95 / 최대 처리량 / 풀 포화 시간 / 매진 시각(잔여 첫 0) / 불변식 (없으면 "검사 안 함"). 요약 표의 최대 풀 사용률은 "85 % · 대기 0"처럼 그 초의 풀 대기를 함께 표시 (예전 기록은 대기 생략). 비교 모드는 A·B 값을 태그(A/B, 실행 색)와 함께 나란히, 나은 쪽 ok 색.
 
 **그래프 4개 (2×2)**
 | 그래프 | 단일 | 비교 | 기준선 |
 |---|---|---|---|
-| 처리량 | 선 1개 | A·B | - |
+| 처리량 | 선 1개 (+ 묶음 최대 점선, 9.4) | A·B | - |
 | 응답 시간 | p95 진하게 + p99 연하게 | A·B p95 | SLO 점선 |
 | 에러율 | 전체 + conflict 비중 연하게 | A·B | warn·bad 점선 |
 | DB 풀 사용률 | 사용률 + 풀 대기 막대 | A·B | 포화 점선 |
@@ -1166,7 +1194,7 @@ server 통합 테스트는 **Testcontainers Postgres**. 시간은 `MutableClock`
 - 입장키 서명 성공/위조/다른 runEpoch/만료.
 - busy: HOLD_ACTIVE 후 TTL 지나도 유지(`slotsBusyOverTtl` 1, `expiredByBusyCap` 0) → HOLD_CLEARED 후 EXPIRED. HOLD_CLEARED 유실 → busy 상한에서 EXPIRED, `expiredByBusyCap` +1, `busyCapExpirations` 기록.
 - 이벤트 순서 뒤바뀜 무시, COMPLETED 이후 무시.
-- closeQueueOnSoldOut true/false, soldOut=false 후 재접수. CLOSED된 ADMITTED의 키는 만료까지 유효. 판매 종료 → 전원 CLOSED, 이후 enter CLOSED(SALE_ENDED).
+- closeQueueOnSoldOut true/false, soldOut=false 후 재접수. 매진 때 ADMITTED는 닫히지 않고 자리 유지. 매진·풀림을 반복해도 유효 키 보유자 ≤ maxActive. 판매 종료 → 전원 CLOSED, 이후 enter CLOSED(SALE_ENDED).
 - 내부 API 비밀 틀리면 401, 없는 kid ignored. `/queue/status`에 좌석 상황 필드 없음.
 
 **mock-pg**: seed 고정 시 실패율 비율, 타임아웃 지연, cancel 멱등, confirmLatency.
@@ -1174,12 +1202,15 @@ server 통합 테스트는 **Testcontainers Postgres**. 시간은 `MutableClock`
 **simulator**
 - 좌석 선택 (앞줄 우선, 가운데 가중치, n매 연석·대체), 페르소나·도착·성향 샘플링 비율.
 - 이탈 성향 (casual 시점 분포, persistent 반감 확률, hardcore 재진입), 대기 중 이탈 없음, 재방문 확률.
+- 재방문 재시도 (11.5.1): 간격·편차, persistent 반감 중단, casual 재시도 없음, 매진 중 시도는 예약 서버 요청 0건, 난수 스트림 분리, 끔이면 1.3.0과 같은 행동.
+- 작은 표본: 19건 창 제외·20건 창 포함, 표본 적음 창은 sloBreachSec·p95Max에 안 들어감.
+- 그래프 다운샘플: 1초짜리 최대값이 묶음 최대 점선과 최고점 표시에 남음.
 - 시계 기준점: 세 reset의 anchorAt이 같음, saleEndAt·startedAt·t가 anchor 기준, 시뮬레이터 안 시간 판단이 anchor 시계 기준.
 - 실제 짧은 실행 (1×, saleDurationSec=120): 판매 종료 t가 118~122, clockOffsetsMs 전부 500ms 이하. **고치기 전 코드로 먼저 돌려 실패(약 113초)하는 것을 확인한 뒤** 고친다.
 - 판매 종료 인식: SALE_ENDED / phase=ENDED로 종료, 보조 경로는 정상 응답이 없을 때(transport·timeout·5xx)만, `saleEndFallback` 카운트. 기본 경로와 보조 경로를 각각 빼면 실패하는지.
 - 사전 점검: 대상 다운 → TARGET_DOWN, 기록 안 생김. reset 실패 → FAILED.
 - 저장: 파일 5개(+ invariants), timeseries 줄 수 ≈ 실행 초, 깨진 구버전 파일이 있어도 목록 성공 + warnings.
-- 비교: fingerprint 같음/다름, 9.2의 경고 전부(현재 8종), diffPct·winner, 다운샘플 규칙.
+- 비교: fingerprint 같음/다름, 9.2의 경고 전부(현재 9종), diffPct·winner, 다운샘플 규칙.
 - 요약 JSON 집계 (가짜 응답 시퀀스).
 
 ---
