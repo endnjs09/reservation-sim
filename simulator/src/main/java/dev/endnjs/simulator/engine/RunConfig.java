@@ -41,13 +41,15 @@ public record RunConfig(int rows, int cols, List<Grade> grades, int users, List<
                     && uri.getQuery() == null && uri.getFragment() == null, "Invalid target URL");
         }
     }
-    public record Thresholds(double p95WarnMs,double p95SloMs,double errWarnPct,double errBadPct,double poolWarnPct,double poolBadPct) {
+    /** minSamplesPerWindow: 1초 창의 예약 서버 요청이 이보다 적으면 p95·에러율 판정에서 뺀다. 값 없는 예전 기록은 0(빼지 않음), 새 실행 기본 20. */
+    public record Thresholds(double p95WarnMs,double p95SloMs,double errWarnPct,double errBadPct,double poolWarnPct,double poolBadPct,Integer minSamplesPerWindow) {
         public Thresholds {
             require(Double.isFinite(p95WarnMs) && Double.isFinite(p95SloMs) && p95WarnMs>=0 && p95SloMs>p95WarnMs,"Invalid latency thresholds");
             require(Double.isFinite(errWarnPct) && Double.isFinite(errBadPct) && errWarnPct>=0 && errBadPct>errWarnPct && errBadPct<=100,"Invalid error thresholds");
             require(Double.isFinite(poolWarnPct) && Double.isFinite(poolBadPct) && poolWarnPct>=0 && poolBadPct>poolWarnPct && poolBadPct<=100,"Invalid pool thresholds");
+            minSamplesPerWindow=minSamplesPerWindow==null ? 0 : minSamplesPerWindow;require(minSamplesPerWindow>=0,"Invalid minimum samples");
         }
-        public static Thresholds defaults() { return new Thresholds(100,300,8,25,70,90); }
+        public static Thresholds defaults() { return new Thresholds(100,300,8,25,70,90,20); }
     }
     public RunConfig {
         queueMode=queueMode==null ? "EXTERNAL" : queueMode;require(Set.of("EMBEDDED","EXTERNAL").contains(queueMode),"Invalid queue mode");

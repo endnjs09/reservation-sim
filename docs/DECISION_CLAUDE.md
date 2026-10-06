@@ -234,3 +234,12 @@
 | 집계: events.revisitRetries(시도 수, 실시간 이벤트 목록에는 남기지 않음 — 초당 수십 건이라), revisitRetryAdmitted(재시도로 들어간 줄에서 입장한 수). 시계열 `revisit.retriesRps`·`retryAdmittedRps`, `queue.enterRps`(대기열 진입 요청) 추가. 재시도가 막혀 돌아올 때 "좌석 없이 퇴장" 이벤트를 다시 남기지 않음 | 지시 + 이벤트 목록 범람 방지 | `RunStats.count`, `RunMeasurements`, `RunStore.series` 필드 목록 | - |
 | 설정 revisitRetryEnabled(새 실행 true, 값 없는 기록 false)·revisitRetryHardcoreMultiplier(2.0)·revisitRetryPersistentSec(10~20). 화면 시나리오 탭 > 이탈 성향 | 지시 | `RunConfig`, `app.js` | - |
 | 테스트: 엔진 테스트(매진 중 hardcore 재시도 약 60회·예약 서버 요청 0, casual·끔 0회)가 연결 전 실패 확인, 재시도 경로를 끈 변형에서 실패 확인 후 되돌림. 간격·편차, persistent 180초에 약 50% 중단(±0.03), hardcore 안 그만둠, 별도 스트림 | AGENTS.md | `RevisitRetryTest` | - |
+
+## 작은 표본 지표 (2026-10-06, 사용자 지시 · SPEC 반영 전)
+
+| 결정한 것 | 어떻게 정했나 | 영향받는 코드 | 이유 |
+|---|---|---|---|
+| 표본 수 = 1초 창 예약 서버 응답 수(에러율 계산과 같은 집계, 429 제외). `thresholds.minSamplesPerWindow`(새 실행 20, 값 없는 예전 기록 0 = 빼지 않음) 미만이면 `signals.lowSample=true`, `signals.samples=n` | 지시 | `RunConfig.Thresholds`, `RunMeasurements.sample` | - |
+| 표본 적은 창: levels.p95·err = "low", SLO 초과(sloBreachSec·SLO_BREACH 사건)·p95Max·**p99Max**에서 제외. 값 자체(p95, errPct)는 시계열에 그대로, 누적 latencyMs 그대로. 폭주 구간 평균(p95Rush·errPctRush)은 그대로 둠 | 지시는 sloBreachSec·p95Max·에러율 경고. p99Max는 같은 지연 최대라 같이 뺌. 폭주 구간은 요청이 많아 영향 없고 지시에 없음 | 같은 곳 | - |
+| 화면: p95·에러율 카드 값은 그대로 두고 회색, 아래 줄 "표본 적음 (n건)". 고급 탭 계측 임계치에 "최소 표본" 입력 | 지시 | `app.js` | - |
+| 테스트: 19건 창 제외·20건 창 포함, run-203fb855 t=1004 같은 3건 389.9ms 창 SLO 초과 아님, 예전 기록 0. 고치기 전 컴파일 실패(필드 없음), 판정을 끈 변형 2개 실패 확인 후 되돌림. 화면은 가짜 tick으로 확인 | AGENTS.md | `LowSampleTest` | - |

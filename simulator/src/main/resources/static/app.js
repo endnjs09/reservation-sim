@@ -246,6 +246,7 @@ const groups = {
       row(g, "랜덤 시드", [{ path: "seed", min: "-9223372036854775808" }]);
     }],
     ["계측 임계치", (g) => {
+      row(g, "최소 표본 (1초 창 요청 수)", [{ path: "thresholds.minSamplesPerWindow", min: 0 }]);
       row(g, "p95 경고 / SLO (ms)", [{ path: "thresholds.p95WarnMs", step: "any" }, { path: "thresholds.p95SloMs", step: "any", sep: "/", aria: "SLO" }]);
       row(g, "에러율 경고 / 나쁨 (%)", [{ path: "thresholds.errWarnPct", max: 100, step: "any" }, { path: "thresholds.errBadPct", max: 100, step: "any", sep: "/", aria: "나쁨" }]);
       row(g, "풀 경고 / 포화 (%)", [{ path: "thresholds.poolWarnPct", max: 100, step: "any" }, { path: "thresholds.poolBadPct", max: 100, step: "any", sep: "/", aria: "포화" }]);
@@ -629,11 +630,13 @@ function render(tick) {
     ["pool", sig.poolPct, levels.pool, `대기 ${num(sig.poolPending)} · 락 대기 ${num(sig.lockWaits)}`, 100],
   ];
   // 정리 중·완료·중지·실패에는 숫자 카드를 비운다: 마지막 1초 값(판매 종료 409 등)이 멈춘 채 빨갛게 남지 않게. 결과는 실행 결과 탭에서
+  // 표본 적음: 1초 창 요청이 최소 표본 미만이면 p95·에러율은 회색, "표본 적음 (n건)" (판정에서 빠짐)
+  if (live && sig.lowSample) for (const c of cards) if (c[0] === "p95" || c[0] === "err") { c[2] = "low"; c[3] = `표본 적음 (${num(sig.samples)}건)`; }
   if (finalizing || finished) for (const c of cards) { c[1] = null; c[2] = null; c[3] = finalizing ? "실행 끝 · 남은 선점·결제 정리 중" : "실행 끝 · 결과는 실행 결과 탭에서"; }
   for (const [k, v, lv, sub, max] of cards) {
     text(`v-${k}`, k === "p95" ? dec(v) : num(v));
     text(`s-${k}`, sub);
-    const card = $(`card-${k}`), color = lv ? LEVEL_COLOR[levelOf(lv)] : "#EEF1F6";
+    const card = $(`card-${k}`), color = lv === "low" ? "#929CAF" : lv ? LEVEL_COLOR[levelOf(lv)] : "#EEF1F6";
     if (lv) setLevel(card, lv); else setLevel(card, "ok");
     $(`v-${k}`).style.color = live && v !== undefined && v !== null ? color : "#EEF1F6";
     $(`bars-${k}`).style.color = color;

@@ -33,12 +33,15 @@ public final class RunMeasurements {
         }
         var signals=new LinkedHashMap<String,Object>();signals.put("rps",total.get("rps"));signals.put("p50",latency.get("p50"));signals.put("p95",latency.get("p95"));signals.put("p99",latency.get("p99"));
         signals.put("errPct",responses==0 ? 0 : round(errors/responses*100));
+        // 표본 적음: 1초 창의 예약 서버 응답(429 제외)이 minSamplesPerWindow 미만이면 p95·에러율 판정(levels, SLO 초과, p95·p99 최대)에서 뺀다 (docs/DECISION_CLAUDE.md)
+        long samplesInWindow=Math.round(responses);boolean lowSample=config.thresholds().minSamplesPerWindow()>0 && samplesInWindow<config.thresholds().minSamplesPerWindow();
+        signals.put("samples",samplesInWindow);signals.put("lowSample",lowSample);
         var seatsCache=object(server.get("seatsCache"));signals.put("rateLimitedRps",seatsCache.get("rateLimitedRps"));
         signals.put("failPct",client.serverSent()==0 ? 0 : round(client.serverFailed()*100.0/client.serverSent()));
         signals.put("poolPct",number(p.get("max"))==0 ? null : round(number(p.get("active"))/number(p.get("max"))*100));
         signals.put("poolPending",p.get("pending"));signals.put("lockWaits",db.get("lockWaits"));
         signals.put("threadsBusyPct",number(http.get("threadsMax"))==0 ? null : round(number(http.get("threadsBusy"))/number(http.get("threadsMax"))*100));
-        var thresholds=config.thresholds();signals.put("levels",Map.of("p95",level(signals.get("p95"),thresholds.p95WarnMs(),thresholds.p95SloMs()),"err",level(signals.get("errPct"),thresholds.errWarnPct(),thresholds.errBadPct()),"pool",level(signals.get("poolPct"),thresholds.poolWarnPct(),thresholds.poolBadPct())));
+        var thresholds=config.thresholds();signals.put("levels",Map.of("p95",lowSample ? "low" : level(signals.get("p95"),thresholds.p95WarnMs(),thresholds.p95SloMs()),"err",lowSample ? "low" : level(signals.get("errPct"),thresholds.errWarnPct(),thresholds.errBadPct()),"pool",level(signals.get("poolPct"),thresholds.poolWarnPct(),thresholds.poolBadPct())));
         var events=new ArrayList<Map<String,Object>>();String next=Objects.toString(server.get("phase"),"OPEN");
         if(!next.equals(phase)) {
             events.add(event(t,"PHASE",Map.of("to",next)));if(next.equals("ENDED")) events.add(event(t,"SALE_ENDED",Map.of()));
@@ -51,7 +54,7 @@ public final class RunMeasurements {
             details.put("seats",seats>0 ? seats : null);details.put("revisits",live.events().getOrDefault("revisits",0L));
             events.add(event(t,"REOPEN",details));reopens=reopenCount;
         }
-        boolean nowSlo=signals.get("p95")!=null && number(signals.get("p95"))>=thresholds.p95SloMs();
+        boolean nowSlo=!lowSample && signals.get("p95")!=null && number(signals.get("p95"))>=thresholds.p95SloMs();
         boolean nowPool=signals.get("poolPct")!=null && number(signals.get("poolPct"))>=thresholds.poolBadPct();
         if(nowSlo!=slo) { events.add(event(t,nowSlo ? "SLO_BREACH_START" : "SLO_BREACH_END",Map.of()));slo=nowSlo; }
         if(nowPool!=pool) { events.add(event(t,nowPool ? "POOL_SAT_START" : "POOL_SAT_END",Map.of()));pool=nowPool; }
@@ -62,7 +65,7 @@ public final class RunMeasurements {
         samples++;if(nowPool) poolSat++;if(nowSlo) sloSec++;
         if(next.equals("RUSH")) { if(signals.get("p95")!=null) { rushP95+=number(signals.get("p95"));rushSamples++; }rushErr+=number(signals.get("errPct"));rushErrSamples++; }
         for(String name:List.of("rps","p95","p99","poolPct","lockWaits")) {
-            Object value=signals.get(name);String key=name+"Max";
+            Object value=lowSample && (name.equals("p95") || name.equals("p99")) ? null : signals.get(name);String key=name+"Max";
             if(value!=null && (!peaks.containsKey(key) || number(value)>number(peaks.get(key)))) {
                 peaks.put(key,value);
                 // 최대 풀 사용률이 순간값인지 실제 포화인지 보도록 그 초의 풀 대기 수를 같이 남긴다 (추가 필드)
