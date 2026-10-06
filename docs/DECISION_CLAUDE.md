@@ -243,3 +243,12 @@
 | 표본 적은 창: levels.p95·err = "low", SLO 초과(sloBreachSec·SLO_BREACH 사건)·p95Max·**p99Max**에서 제외. 값 자체(p95, errPct)는 시계열에 그대로, 누적 latencyMs 그대로. 폭주 구간 평균(p95Rush·errPctRush)은 그대로 둠 | 지시는 sloBreachSec·p95Max·에러율 경고. p99Max는 같은 지연 최대라 같이 뺌. 폭주 구간은 요청이 많아 영향 없고 지시에 없음 | 같은 곳 | - |
 | 화면: p95·에러율 카드 값은 그대로 두고 회색, 아래 줄 "표본 적음 (n건)". 고급 탭 계측 임계치에 "최소 표본" 입력 | 지시 | `app.js` | - |
 | 테스트: 19건 창 제외·20건 창 포함, run-203fb855 t=1004 같은 3건 389.9ms 창 SLO 초과 아님, 예전 기록 0. 고치기 전 컴파일 실패(필드 없음), 판정을 끈 변형 2개 실패 확인 후 되돌림. 화면은 가짜 tick으로 확인 | AGENTS.md | `LowSampleTest` | - |
+
+## bench 확인 · 새 기준선 (2026-10-06, 입장 정원·재방문 재시도·작은 표본 이후)
+
+| 결정한 것 | 어떻게 정했나 | 영향받는 코드 | 이유 |
+|---|---|---|---|
+| 새 기준선 conditional `run-e28355d5`, pessimistic `run-3b6b4a6d` (pinned). 둘 다 COMPLETED, incomplete·error 0, 판매 100, SALE_ENDED 기록됨, 스왑 0, SWAP_USED·CLOCK_OFFSET_HIGH 없음. 다른 docker 컨테이너 3개(CPU 0~0.23%). 비교 경고 없음, configDiff server.strategy 하나. 이전 기준선 `run-ebf26b93`·`run-3b71ffc8`은 "1.3.0 기본값 ·" 접두, 고정 유지 | 지시 4번 | - | - |
+| 이전 기준선 `run-ebf26b93`도 입장 정원 초과 버그가 있었음: 유효 키 보유자 최대 407(t=627, 시뮬레이터 입장 312·대기열 active 0). 새 실행 3개는 모두 최대 200 = maxActive. 판매 중(t 30~1190) 시뮬레이터 입장(입금 대기 제외) − 대기열 active 차이: 중앙값 0, 95% 2~3, 최대 20~21(대기열이 1초에 20명씩 입장시키는 순간과 표본 시점 차이). 입금 대기는 COMPLETED로 자리를 반납하므로 비교에서 뺌 | 1번 화면 확인 | `build/compare-v2.mjs`(레포 밖 도구) | - |
+| 새 conditional 기준선에 SLO 초과 1초(p95 301.3ms, 표본 충분한 창)와 표본 적음 창 8초. thresholds(minSamplesPerWindow 포함)는 기존 설계대로 fingerprint·configDiff에서 제외되는 판정값이라 이전 기준선과의 configDiff에는 재시도 설정만 나옴 | 기록 | - | - |
+| 캐시 1초 비교 `run-4239685f`: 경고 SCENARIO_DIFFERS, configDiff seatsCacheSec 하나 | 지시 | - | - |
