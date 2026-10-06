@@ -16,11 +16,6 @@ final class RunHttp {
         control.check();
         return response;
     }
-    HttpTransport.Response internalReservation(long id) throws IOException,InterruptedException {
-        var response=transport.exchange(new HttpTransport.Request(HttpTransport.Target.SERVER,"GET","/reservations/"+id,
-                Map.of(),null,control.requestTimeout()));
-        control.check();return response;
-    }
     HttpTransport.Response send(String endpoint, HttpTransport.Target target, String method, String path,
             Map<String, String> headers, Map<String, Object> body) throws IOException, InterruptedException {
         var request = new HttpTransport.Request(target, method, path, headers, body, control.requestTimeout());

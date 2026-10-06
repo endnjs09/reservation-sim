@@ -74,7 +74,11 @@ class V5EngineTest {
         var fake=new Fake(config(Map.of("paymentMix",Map.of("card",0,"deposit",100),"depositNoPayRate",1,"revisitProb",Map.of("casual",1,"persistent",1,"hardcore",1))));
         fake.setup().admitted().available().held().deposit();var summary=run(fake);
         assertThat(summary.outcomes()).containsEntry("gaveUp",1L).containsEntry("depositExpired",1L).containsEntry("depositPaid",0L);
-        assertThat(summary.requests().byEndpoint()).containsEntry("deposit.pay",0L).containsEntry("reservation",0L).containsEntry("queue.enter",1L);
+        assertThat(summary.requests().byEndpoint()).containsEntry("deposit.pay",0L).containsEntry("queue.enter",1L);
+        // 입금 기한까지 예약 상태를 확인하는 GET /reservations/{id}는 사용자 요청으로 센다 (서버 reservation 집계와 같은 기준, docs/DECISION_CLAUDE.md)
+        long polls=fake.calls.stream().filter(c -> c.request().method().equals("GET") && c.request().path().equals("/reservations/1")).count();
+        assertThat(polls).isPositive();assertThat(summary.requests().byEndpoint()).containsEntry("reservation",polls);
+        assertThat(((Number)RunStore_object(summary.clientLatencyMs().get("reservation")).get("count")).longValue()).isEqualTo(polls);
         assertThat(summary.events()).containsEntry("reopenSeen",1L);
         assertThat(summary.seatsSold()).isZero();assertThat(fake.reservation).isEqualTo("DEPOSIT_EXPIRED");
         assertThat(summary.requests().sent()).isEqualTo(fake.userCalls());
@@ -169,6 +173,7 @@ class V5EngineTest {
         assertThat(stats.summary().requests().sent()).isZero();
     }
 
+    private static Map<?,?> RunStore_object(Object value) { return value instanceof Map<?,?> map ? map : Map.of(); }
     static final class Time implements RunTime {
         final AtomicLong nanos=new AtomicLong();
         public Instant instant() { return Instant.parse("2026-10-03T05:00:00Z").plusNanos(nanos.get()); }
@@ -232,7 +237,7 @@ class V5EngineTest {
             return step.response;
         }
         Call call(String path) { return calls.stream().filter(c -> c.request.path().equals(path)).findFirst().orElseThrow(); }
-        long userCalls() { return calls.stream().filter(c -> !c.request.path().startsWith("/admin/") && !c.request.path().equals("/reservations/1")).count(); }
+        long userCalls() { return calls.stream().filter(c -> !c.request.path().startsWith("/admin/")).count(); }
         void empty() { assertThat(steps).isEmpty(); }
     }
 }

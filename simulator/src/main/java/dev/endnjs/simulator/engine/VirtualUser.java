@@ -199,7 +199,8 @@ public final class VirtualUser implements Runnable {
             if(paid.status()!=409 || !paid.code().equals("DEPOSIT_NOT_ACCEPTABLE")) requireOk(paid);
         }
         while(true) {
-            var observed=http.internalReservation(reservation);requireOk(observed);
+            // 입금 기한까지 예약 상태 확인: 사용자 요청으로 센다 (서버 reservation 집계와 같은 기준, docs/DECISION_CLAUDE.md)
+            var observed=http.send("reservation",SERVER,"GET","/reservations/"+reservation,Map.of(),null);requireOk(observed);
             switch(observed.text("status")) {
                 case "DEPOSIT_EXPIRED" -> { stats.milestone(index,RunStats.Milestone.depositExpired);stats.note(userId,"미입금 · 예약 마감");return gaveUp; }
                 case "CONFIRMED" -> { stats.milestone(index,RunStats.Milestone.depositPaid);cancelIfPlanned(reservation);return confirmed; }
