@@ -2,8 +2,10 @@
 
 > **이 파일 하나가 유일한 명세다.** `BASE_SPEC.md`(v0.3), `SPEC_v0.4.md`, `SPEC_v0.5.md`를 합치고 폐기된 규칙을 뺀 것이다.
 > 예전 파일은 `docs/history/`에 참고용으로만 둔다. 예전 파일과 이 파일이 다르면 **이 파일이 맞다.**
+> API·DB의 필드 단위 상세는 `API_SPEC.md`·`DB_SPEC.md`에 있다. 그 둘과 이 파일이 다르면 **이 파일이 맞고**, 두 문서를 고친다.
 >
 > 변경 기록
+> - 2026-11-17 통합본 1.4.1: 7.5 내부 API의 `X-Run-Epoch`·401 코드 명시. 5.1을 마이그레이션과 맞춤 (`sale_lifecycle` 테이블, `release_batches.released_at`·`reopened`, 열린 배치 1개 제약, `payment_method` 기본값, 마이그레이션 5개). 문서 분리 — API 상세는 `API_SPEC.md`, DB 상세는 `DB_SPEC.md`, 작업 목록과 진행은 `BACKLOG.md` (2.1, 18장). 명세 안 모순 정리: 17장 T7의 rate limit 범위를 좁힘(6.4.1 좌석 조회 새로고침 제한은 범위 안), 부록 A의 "대기 중 이탈 판단" 폐기 항목 삭제(11.4.1과 충돌), 16장 시뮬레이터 테스트의 "대기 중 이탈 없음"을 11.4.1 기준으로 수정, 7.8 `close-queue-on-sold-out` 기본값을 true로(10.3과 맞춤). 18장을 단계 정의와 완료 기준만 남기고 진행 상태는 BACKLOG.md로.
 > - 2026-10-06 통합본 1.4.0: 매진 시 대기자만 닫고 입장자 자리는 유지 (7.6, 정원 초과 버그 수정). 재방문 대기 중 재시도 (11.5.1, 10.3, 11.8). 작은 표본 창 제외 (8.1, 11.8, 9.2, 14.1). 완료·중지 상태 카드 비우기 (14.1). 그래프 묶음 최대값, 최대 풀 사용률 옆 풀 대기 (9.4, 11.8, 14.2). 예약 조회를 사용자 요청으로 집계 (11.5, 11.8). 새 bench 기준선 (10.4).
 > - 2026-10-05 통합본 1.3.0: 매진 시 대기열 닫기 기본 켬 (7.6, 10.3). 좌석 조회 새로고침 제한 (6.4.1, 기본 켬)·좌석 조회 캐시 (6.4.2, 선택). 429는 에러율에서 제외 (8.3, 8.1). 종료 정지 대기를 남은 선점·결제가 없으면 바로 끝내기, "정리 중" 표시 (8.5, 14.1). 엔진 종료 때 SALE_ENDED 기록 (8.5). 누적 카운터에서 Hardcore 제거, 실시간 이벤트 80건 보관 (14.1). 새 bench 기준선 (10.4).
 > - 2026-10-05 통합본 1.2.0: 대기 이탈 규칙 (11.4.1, 10.3, 11.8), 실행 중지 시 예매 후 취소 대기 = confirmed (11.8), 사용자 노드 6칸 (14.1), 창 크기 맞춤 레이아웃 (13장), 측정 중 다른 컨테이너 경고 (10.4).
@@ -54,7 +56,10 @@ reservation-sim/
 ├── settings.gradle          # include 'server', 'queue', 'mock-pg', 'simulator'
 ├── build.gradle             # 공통 (Java 21 toolchain)
 ├── docker-compose.yml       # postgres:17
-├── SPEC.md                  # 이 문서
+├── SPEC.md                  # 이 문서 (기준)
+├── API_SPEC.md              # API 상세 (SPEC 6·7·11.9·12장 기반)
+├── DB_SPEC.md               # DB 상세 (SPEC 4·5·6장 기반)
+├── BACKLOG.md               # 작업 목록·진행 상태
 ├── decision.md              # Codex 결정 기록
 ├── DECISION_CLAUDE.md       # Claude Code 결정 기록
 ├── contracts/               # API 응답 계약 파일 (0장 5번)
@@ -211,7 +216,7 @@ dev.endnjs.simulator
 
 ## 5. 데이터베이스 (server, Flyway)
 
-### 5.1 테이블 (V1 + V2 + V3 결과)
+### 5.1 테이블 (V1 ~ V3 결과)
 ```sql
 seats (id BIGINT PK, label VARCHAR(10) UNIQUE, row_index INT, col_index INT, grade VARCHAR(16), price INT,
        status VARCHAR(16) CHECK (status IN ('AVAILABLE','HELD','PENDING_DEPOSIT','RETURN_PENDING','SOLD')),
@@ -219,7 +224,7 @@ seats (id BIGINT PK, label VARCHAR(10) UNIQUE, row_index INT, col_index INT, gra
 
 reservations (id BIGSERIAL PK, seat_id BIGINT REFERENCES seats(id),   -- 대표 좌석(가장 작은 id)
        user_id VARCHAR(64), status VARCHAR(20) CHECK (... 4.2의 9개 ...),
-       seat_count INT DEFAULT 1, payment_method VARCHAR(16),          -- CARD | DEPOSIT
+       seat_count INT DEFAULT 1, payment_method VARCHAR(16) DEFAULT 'CARD', -- CARD | DEPOSIT
        hold_expires_at TIMESTAMPTZ, confirm_deadline TIMESTAMPTZ, deposit_deadline TIMESTAMPTZ,
        idempotency_key VARCHAR(64), admission_kid UUID,
        created_at TIMESTAMPTZ, updated_at TIMESTAMPTZ)
@@ -232,9 +237,14 @@ payments (id UUID PK /* = orderId */, reservation_id BIGINT UNIQUE, amount INT,
        status VARCHAR(16) CHECK (status IN ('REQUESTED','APPROVED','FAILED','CANCELED')),
        payment_key VARCHAR(64), fail_reason VARCHAR(64), created_at, updated_at)
 
-release_batches (id BIGSERIAL PK, release_at TIMESTAMPTZ, released BOOLEAN DEFAULT FALSE, seat_count INT DEFAULT 0)
+release_batches (id BIGSERIAL PK, release_at TIMESTAMPTZ, released BOOLEAN DEFAULT FALSE, seat_count INT DEFAULT 0,
+       released_at TIMESTAMPTZ, reopened BOOLEAN DEFAULT FALSE)
+  UNIQUE ((TRUE)) WHERE released = FALSE                              -- 열린 배치 최대 1개
+
+sale_lifecycle (id INT PK CHECK (id = 1), started_at TIMESTAMPTZ, sale_end_at TIMESTAMPTZ, time_scale INT,
+       sale_duration_sec INT, ended_at TIMESTAMPTZ, ever_zero BOOLEAN DEFAULT FALSE)   -- 판매 시계 1행 (6.10, 6.12)
 ```
-- 마이그레이션: `V1__init.sql`, `V2__v04.sql`(다매·입금·배치), `V3__drop_queue_tokens.sql`(`DROP TABLE IF EXISTS queue_tokens;` + `reservations.admission_kid`. W3에서 이미 다른 이름으로 만들었으면 그 이름을 유지하고 보고).
+- 마이그레이션: `V1__init.sql`, `V1_1__sale_lifecycle.sql`, `V2__v04.sql`(다매·입금·배치), `V2_1__return_history.sql`(배치 이력·열린 배치 1개·ever_zero), `V3__drop_queue_tokens.sql`(`DROP TABLE IF EXISTS queue_tokens;` + `reservations.admission_kid`). 컬럼 단위 정의는 `DB_SPEC.md`.
 - **좌석 목록의 기준은 `reservation_seats`**다. `reservations.seat_id`는 대표 좌석일 뿐이다.
 
 ### 5.2 최후 방어선 인덱스 (backstop)
@@ -550,7 +560,7 @@ cors-origins: [ "http://localhost:8090" ]
 **`POST /queue/leave`** `{ "token" }` → WAITING/ADMITTED면 LEFT, 자리 반납.
 
 ### 7.5 내부 API (예약 서버 → 대기열 서버)
-헤더 `X-Internal-Secret` 필수, 틀리면 401.
+헤더 `X-Internal-Secret` 필수, 틀리면 401 `UNAUTHORIZED`. 예약 서버는 `X-Run-Epoch`도 함께 보내고, 대기열 서버는 현재 runEpoch와 다르면 이전 실행의 늦은 알림으로 보고 무시한다 (`{ "ignored": true }`).
 
 **`POST /internal/slots/{kid}/events`** `{ "type": "HOLD_ACTIVE" | "HOLD_CLEARED" | "COMPLETED", "at" }`
 | type | 처리 |
@@ -587,7 +597,7 @@ cors-origins: [ "http://localhost:8090" ]
 ```yaml
 server.port: 8082
 queue: { max-active: 200, admit-per-sec: 20, admission-ttl-sec: 420, busy-max-extra-sec: 510,
-         close-queue-on-sold-out: false, admission-interval-ms: 1000 }
+         close-queue-on-sold-out: true, admission-interval-ms: 1000 }
 admission.key-secret: dev-only-change-me
 internal.secret: dev-internal-secret
 cors-origins: [ "http://localhost:8090" ]
@@ -697,7 +707,7 @@ invariants.json     외부 검사기가 씀 (없을 수 있음)
   "fingerprint": "sha256:…" }
 ```
 - status: RUNNING / COMPLETED / STOPPED / FAILED (`statusReason`).
-- `queueMode`: 대기열 분리 전 실행은 `EMBEDDED`, 이후 `EXTERNAL`. W3에서 내장 대기열을 지운 뒤에는 EMBEDDED 실행이 불가능하고, 기존 EMBEDDED 기록은 읽기·비교만 한다. EMBEDDED 기록에서 대기열 서버 전용 값(`busy`, `slotsBusyOverTtl`, `expiredByBusyCap`, `admittedThisTick`, snapshot의 `queue`)은 null이며 I8″·I16은 검사 대상 아님.
+- `queueMode`: 대기열 분리 전 실행은 `EMBEDDED`, 이후 `EXTERNAL`. 대기열 서버 분리(M3)로 내장 대기열을 지운 뒤에는 EMBEDDED 실행이 불가능하고, 기존 EMBEDDED 기록은 읽기·비교만 한다. EMBEDDED 기록에서 대기열 서버 전용 값(`busy`, `slotsBusyOverTtl`, `expiredByBusyCap`, `admittedThisTick`, snapshot의 `queue`)은 null이며 I8″·I16은 검사 대상 아님.
 - `server.*`는 시작 시 서버 config·metrics에서 실제 값을 읽어 기록. `seatsCacheSec`은 fingerprint에 포함.
 - 새 필드가 없는 예전 기록은 새로고침 제한 끔·캐시 0으로 읽는다 (그 기능이 없던 실행).
 
@@ -824,7 +834,7 @@ p95Max(낮음), p99Max(낮음), p95Rush(낮음), sloBreachSec(낮음), errPctRus
 | 실행 | timeScale | 4 | 전부 |
 | 계측 | thresholds | 8.1 기본값, `minSamplesPerWindow` 20 | 기록·UI |
 | 실행 | timeLimitSec | 현재 구현 값 유지 (BASE 기본 600은 판매 시간 1200보다 짧다. 구현 값이 판매 시간 + 정지 대기보다 짧으면 보고) | sim |
-| 실행 | queueMode | EXTERNAL (W3 완료 전에는 EMBEDDED 가능) | sim |
+| 실행 | queueMode | EXTERNAL | sim |
 | 접속 | targets (server, queue, pg), requestTimeoutMs | :8080, :8082, :8081, 10000 | sim |
 
 **페르소나별 시간** (구간 내 균등)
@@ -1201,7 +1211,7 @@ server 통합 테스트는 **Testcontainers Postgres**. 시간은 `MutableClock`
 
 **simulator**
 - 좌석 선택 (앞줄 우선, 가운데 가중치, n매 연석·대체), 페르소나·도착·성향 샘플링 비율.
-- 이탈 성향 (casual 시점 분포, persistent 반감 확률, hardcore 재진입), 대기 중 이탈 없음, 재방문 확률.
+- 이탈 성향 (casual 시점 분포, persistent 반감 확률, hardcore 재진입), 대기 이탈(11.4.1: 반감기 확률, hardcore는 떠나지 않음, 끔이면 대기 중 이탈 없음), 재방문 확률.
 - 재방문 재시도 (11.5.1): 간격·편차, persistent 반감 중단, casual 재시도 없음, 매진 중 시도는 예약 서버 요청 0건, 난수 스트림 분리, 끔이면 1.3.0과 같은 행동.
 - 작은 표본: 19건 창 제외·20건 창 포함, 표본 적음 창은 sloBreachSec·p95Max에 안 들어감.
 - 그래프 다운샘플: 1초짜리 최대값이 묶음 최대 점선과 최고점 표시에 남음.
@@ -1222,23 +1232,29 @@ server 통합 테스트는 **Testcontainers Postgres**. 시간은 `MutableClock`
 | T1 | 목표 rps 제어(open-loop), 도착률 기반 부하 |
 | T4 | 서버 다중 인스턴스, Redis, 분산 락 |
 | T6 | 결제사 호출 재시도·백오프·서킷 브레이커 (6.6의 조회 1회 + 망취소 + 복구 스케줄러까지만) |
-| T7 | 대기열 Redis 이전, 봇·매크로 차단, rate limit, 공정성 정책(사전 대기열 무작위화 등), 입장 속도 자동 조절 |
+| T7 | 대기열 Redis 이전, 봇·매크로 차단, 사용자·IP 단위의 일반 rate limit(대기열 진입·결제 등), 공정성 정책(사전 대기열 무작위화 등), 입장 속도 자동 조절. **예외**: 좌석 조회 새로고침 제한(6.4.1)은 범위 안이다 |
 | - | 실행 리플레이 |
 | - | 과부하 대응(429/503 요청 버리기) — 분류 자리만 있음 |
 | - | 인증/인가, 실결제, 앱 Docker 이미지, Kafka, Kubernetes |
 
 ---
 
-## 18. 구현 단계와 현재 상태
+## 18. 구현 단계
 
-| 단계 | 범위 | 상태 |
+단계별 작업 항목, 선행 관계, 진행 상태는 `BACKLOG.md`가 관리한다. 이 장은 단계의 범위와 완료 기준만 정한다. 단계마다 16장의 해당 테스트를 통과시키고 멈춘 뒤 보고한다 (0장 1번).
+
+| 단계 | 범위 | 완료 기준 |
 |---|---|---|
-| S1~S6, V1~V6 | 기본 기능, v0.4 도메인 (다매, 입금, 취소표, 이탈 성향, 배속, 화면 v0.4) | 완료 |
-| W1 | 정리 (standbyLimit 제거, 대기열 응답 좌석 필드 제거, closeQueueOnSoldOut, 이탈 입장 후) | 완료 |
-| W2 | 계측 8.1~8.4, 실행 기록 8.5, 사전 점검 10.2, 실행 API·비교 9장 | 완료 (EMBEDDED 기준선 남김) |
-| **W3** | 대기열 서버 7장, 예약 서버 6.3·6.10·6.11, 내장 대기열 제거·V3, 사용자 흐름 11.2~11.3, 대기열 계측 | **진행 중** — 남은 것: 시계 기준점(3장) 적용, bench 환경(10.4)에서 새 기준선. 완료 기준: 16장 해당 테스트 + bench에서 1× 기본 실행 2개(conditional, pessimistic)를 새 기준선으로 남김 — 둘 다 판매 종료 t = 1200 ± 2, 둘의 비교에서 경고 없음·configDiff는 strategy 하나. W2 기준선(EMBEDDED)과의 비교는 **참고용**으로 한 번 돌려 결과만 보고 (예전 시계·bench 밖 실행이라 CLOCK_MODEL_DIFFERS, ENV_DIFFERS는 예상된 경고. 분리 효과는 폭주 구간 지표로만 해석) |
-| W4 | 실시간 화면 13·14.1 | 대기 — 완료 기준: 19장 2번 |
-| W5 | 실행 결과 화면 14.2 | 대기 — 완료 기준: 19장 3~7번 + 1920×1080, 1440×860 스크린샷 |
+| M0 기반 | 모듈·포트(2.1), Docker Compose, Flyway V1, 공통 에러(6.2), 주입 Clock(3장) | 네 모듈 기동, health 200, 마이그레이션 적용 |
+| M1 예약 핵심 | 좌석·등급(4.1), 좌석 조회(6.4), 선점 4전략·멱등·사용자 직렬화(6.5), backstop(5.2), 만료 스케줄러(6.13), reset·stats(6.14) | 16장 선점·2매·동시성 테스트 |
+| M2 결제·입금·취소표 | 카드 2단계와 복구(6.6), 입금(6.7), 입금 마감·취소표 배치(6.8), 취소·조회(6.9), 판매 종료(6.10), phase(6.12), mock-pg(12장) | 4.3 전이표 각 행 테스트, 입금·취소표·판매 종료 테스트 |
+| M3 대기열 서버 | 7장 전체, 입장키 검사·독립 재검증(6.3), SlotNotifier(6.11) | 16장 queue 테스트, 입장키·SlotNotifier 테스트 |
+| M4 시뮬레이터 엔진 | RunConfig(10.3), 가상 사용자(11장), 좌석 선택, 이탈·대기 이탈·재방문·재시도 | 16장 simulator 행동 테스트 |
+| M5 계측·기록·비교 | 8장, 9장, 실행 시작·사전 점검(10.2), 시뮬레이터 API(11.9) | 저장·비교·작은 표본 테스트 |
+| M6 시간·측정 환경 | 시계 기준점(3장), bench(10.4) | 1×·120초 실행 판매 종료 t 118~122, bench 기준선 2개(conditional, pessimistic) 비교 경고 없음 |
+| M7 화면 | UI 공통(13장), 실시간 화면(14.1), 실행 결과 화면(14.2) | 19장 수동 확인 1~7 |
+| M8 부하 대응 | 새로고침 제한(6.4.1), 좌석 조회 캐시(6.4.2), 매진 시 대기열 닫기(7.6) | 16장 해당 테스트, 매진·풀림 반복에서 유효 키 보유자 ≤ maxActive |
+| M9 검증·실험 | 외부 불변식 검사기(이 레포 밖, 0장 8번), 전략 4종 × 3회 비교 실험 | 15장 불변식 검사 결과(invariants.json), 비교 판정표 |
 
 ---
 
@@ -1271,7 +1287,6 @@ server 통합 테스트는 **Testcontainers Postgres**. 시간은 `MutableClock`
 | 매진 시 WAITING 전원 CLOSED, 매진 후 진입 즉시 CLOSED | `closeQueueOnSoldOut`(1.3.0부터 기본 true)로 대체 |
 | 잔여석 연동 입장 `resaleAdmitMultiplier`, 재진입 제한 `NO_SEATS` (v0.3.1) | 비현실적 |
 | 대기열 응답의 좌석 상황 필드 | 대기자는 좌석 상황을 모른다 (`/seats`에는 있음) |
-| 대기 중 이탈 판단 | 이탈은 입장 후에만 |
 | `earlyQuitRate`(일찍 포기형) | 이탈 성향으로 대체. 난수 1회는 순서 유지용으로 남김 (10.3) |
 | 예약 서버 내장 대기열, `queue_tokens`, `X-Queue-Token`, `NOT_ADMITTED`, `queue.enabled` | 대기열 서버 분리 (입장키 방식) |
 | `/queue/enter` 판매 종료 시 409 | 200 + CLOSED(SALE_ENDED) |
